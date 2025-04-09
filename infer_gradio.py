@@ -372,7 +372,7 @@ def download_sovits_models():
         resume_download=True           # Resume interrupted downloads
     )
 
-def transform_audio(args):
+def svc_audio(args):
 
     # 检查预训练模型是否存在，不存在就到网上下载
     whisper_pretrain = "./whisper_pretrain/large-v2.pt"
@@ -467,8 +467,8 @@ def infer(
     speed=1,
     show_info=gr.Info,
     save_line_audio = False,
-    enable_transform = True,
-    transform_model = "",
+    enable_svc = True,
+    svc_model = "",
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
@@ -536,25 +536,25 @@ def infer(
     
     # 如果开启了转换功能，那就判断转换模型是否支持改语种，如果不支持就把转换功能关闭
     # 如果支持，就判断模型是否存在，如果不存在，就到网盘下载
-    if enable_transform:
-        if transform_model == "":
-            enable_transform = False
+    if enable_svc:
+        if svc_model == "":
+            enable_svc = False
         else:
             model_path = ""
             speaker_path = ""
             model_url = ""
             global sovits_models_dict
             if lang_alone in sovits_models_dict:
-                transform_models_list = sovits_models_dict[lang_alone]
-                for speaker in transform_models_list:
-                    if speaker["model_name"] == transform_model:
+                svc_models_list = sovits_models_dict[lang_alone]
+                for speaker in svc_models_list:
+                    if speaker["model_name"] == svc_model:
                             model_path = speaker["model_path"]
                             speaker_path = speaker["speaker_path"]
                             model_url = speaker["model_url"]
                             break
                     
             if model_path == "":
-                enable_transform = False
+                enable_svc = False
             else:
                 # 如果模型在本地不存在，就到网盘下载
                 if not os.path.exists(model_path):
@@ -562,7 +562,7 @@ def infer(
                         show_info("下载sovits模型中……")
                         file_id = get_drive_id(model_url)
                         download_folder = "./sovits-models/" + lang_alone
-                        download_path = download_folder + "/" + transform_model + ".7z"
+                        download_path = download_folder + "/" + svc_model + ".7z"
                         os.makedirs(download_folder, exist_ok=True)
                         if not os.path.exists(download_path):
                             gdown.download(id=file_id, output=download_path, fuzzy=True)
@@ -587,13 +587,14 @@ def infer(
 
     # 开始生成
     generated_waves = []
-    transform_waves = []
+    svc_waves = []
     spectrograms = []
     progress=gr.Progress()
     start_pos = 0
     cur_box_index = 1
     total_box_count = text_box_text_list[0]
-    transform_sampling_rate = 32000
+    svc_sampling_rate = 32000
+    segm_audio_list = []
     for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
 
         final_wave, final_sample_rate, combined_spectrogram = infer_process(
@@ -616,70 +617,75 @@ def infer(
         # 保存中间结果
         if save_line_audio:
             # 按行保存
-            audio_filepath = gen_audio_path + f"/gen_audio_{i + 1}.wav"
+            audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{i + 1}.wav"
             sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
-            if enable_transform:
+            segm_audio_list.append(audio_filepath)
+            if enable_svc:
                 parms = sovits_parms()
                 parms.model = model_path
                 parms.spk =  speaker_path
                 parms.config =  "./sovits_svc/configs/base.yaml"
-                parms.voice = transform_model
+                parms.voice = svc_model
                 parms.wave = audio_filepath
-                sampling_rate, audio_wave = transform_audio(parms)
-                transform_waves.append(audio_wave)
-                transform_sampling_rate = sampling_rate
+                sampling_rate, audio_wave = svc_audio(parms)
+                svc_waves.append(audio_wave)
+                svc_sampling_rate = sampling_rate
 
         else:
             # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
             if i == total_box_count - 1:
                 final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
-                audio_filepath = gen_audio_path + f"/gen_audio_{cur_box_index}.wav"
+                audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{cur_box_index}.wav"
                 sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
-
-                if enable_transform:
+                segm_audio_list.append(audio_filepath)
+                if enable_svc:
                     parms = sovits_parms()
                     parms.model = model_path
                     parms.spk =  speaker_path
                     parms.config =  "./sovits_svc/configs/base.yaml"
-                    parms.voice = transform_model
+                    parms.voice = svc_model
                     parms.wave = audio_filepath
-                    sampling_rate, audio_wave = transform_audio(parms)
-                    transform_waves.append(audio_wave)
-                    transform_sampling_rate = sampling_rate
+                    sampling_rate, audio_wave = svc_audio(parms)
+                    svc_waves.append(audio_wave)
+                    svc_sampling_rate = sampling_rate
 
                 if cur_box_index < len(text_box_text_list):
                     start_pos = total_box_count
                     total_box_count += text_box_text_list[cur_box_index]
                     cur_box_index += 1
 
-    if enable_transform:
+    output_audio_list = []
+    if enable_svc:
         # 导出合并后的24Khz音频
-        last_orgi_audio_path = "last_audio/orgi_gen_audio.wav"
+        last_orgi_audio_path = f"last_audio/{model_name}_orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             if not os.path.exists("last_audio"):
                 os.mkdir("last_audio")
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
             sf.write(last_orgi_audio_path, final_waves, final_sample_rate, 'PCM_24')
+            output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
-        last_gen_audio_path = "last_audio/transform_gen_audio.wav"
+        last_gen_audio_path = f"last_audio/{svc_model}_svc_audio.wav"
         final_waves = None
-        if len(transform_waves) > 0:
+        if len(svc_waves) > 0:
             if not os.path.exists("last_audio"):
                 os.mkdir("last_audio")
-            final_waves = get_final_wave(cross_fade_duration, transform_waves, transform_sampling_rate)
-            sf.write(last_gen_audio_path, final_waves, transform_sampling_rate, 'PCM_24')
-            final_sample_rate = transform_sampling_rate
+            final_waves = get_final_wave(cross_fade_duration, svc_waves, svc_sampling_rate)
+            sf.write(last_gen_audio_path, final_waves, svc_sampling_rate, 'PCM_24')
+            final_sample_rate = svc_sampling_rate
+            output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = "last_audio/orgi_gen_audio.wav"
+        last_gen_audio_path = f"last_audio/{model_name}_orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             if not os.path.exists("last_audio"):
                 os.mkdir("last_audio")
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
             sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_24')
+            output_audio_list.append(last_gen_audio_path)
 
     # Remove silence
     if remove_silence and os.path.exists(last_gen_audio_path):
@@ -689,12 +695,13 @@ def infer(
 
     # Save the spectrogram
     # Create a combined spectrogram
+    output_audio_list.extend(segm_audio_list)
     combined_spectrogram = np.concatenate(spectrograms, axis=1)
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
         spectrogram_path = tmp_spectrogram.name
         save_spectrogram(combined_spectrogram, spectrogram_path)
 
-    return (final_sample_rate, final_waves), spectrogram_path, last_gen_audio_path
+    return (final_sample_rate, final_waves), spectrogram_path, output_audio_list
 
 
 def create_textboxes(num):
@@ -762,8 +769,8 @@ F5-TTS + SOVITS
         speaker_model = ""
         global sovits_models_dict
         if lang_alone in sovits_models_dict:
-            transform_models_list = sovits_models_dict[lang_alone]
-            for speaker in transform_models_list:
+            svc_models_list = sovits_models_dict[lang_alone]
+            for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
 
         if len(speaker_models) > 0:
@@ -822,13 +829,13 @@ F5-TTS + SOVITS
             )
 
     with gr.Row():
-        enable_transform = gr.Checkbox(
+        enable_svc = gr.Checkbox(
                 label="启用音频转换",
                 info="勾选此项，启动sovits音频转换。",
                 value=True,
             )
         
-        transform_model = gr.Dropdown(
+        svc_model = gr.Dropdown(
             choices=speaker_models,
             value=speaker_model,
             label="音频转换音色选择",
@@ -836,6 +843,7 @@ F5-TTS + SOVITS
         )
         password_input = gr.Textbox(
             label="解压密码:",
+            type="password",
             lines=1,
             value="",
         )
@@ -907,12 +915,12 @@ F5-TTS + SOVITS
         )
 
     audio_output = gr.Audio(label="合成音频")
-    download_output = gr.File(label="下载文件")
+    download_output = gr.File(label="下载文件", file_count="multiple")
 
     language.change(
         language_change,
         inputs=[language],
-        outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio, transform_model],
+        outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio, svc_model],
         show_progress="hidden",
     )
     ref_audio.change(
@@ -922,7 +930,6 @@ F5-TTS + SOVITS
         show_progress="hidden",
     )
 
-    # @gpu_decorator
     def basic_tts(
         ref_audio_input,
         ref_text_input,
@@ -934,12 +941,12 @@ F5-TTS + SOVITS
         cross_fade_duration_slider,
         nfe_slider,
         speed_slider,
-        enable_transform,
-        transform_model,
+        enable_svc,
+        svc_model,
         num_input,
         *gen_texts_input,
     ):
-        audio_out, spectrogram_path, gen_audio_path = infer(
+        audio_out, spectrogram_path, gen_audio_list = infer(
             ref_audio_input,
             ref_text_input,
             num_input,
@@ -952,20 +959,19 @@ F5-TTS + SOVITS
             nfe_step=nfe_slider,
             speed=speed_slider,
             save_line_audio=save_line_audio,
-            enable_transform = enable_transform,
-            transform_model = transform_model,
+            enable_svc = enable_svc,
+            svc_model = svc_model,
         )
-        return audio_out, gen_audio_path
+        return audio_out, gen_audio_list
 
     intputs = [ref_audio, basic_ref_text_input, language, custom_ckpt_path, password_input, remove_silence, save_line_audio, \
-               cross_fade_duration_slider, nfe_slider, speed_slider, enable_transform, transform_model, num_input] + textboxes
+               cross_fade_duration_slider, nfe_slider, speed_slider, enable_svc, svc_model, num_input] + textboxes
 
     generate_btn.click(
         basic_tts,
         inputs=intputs,
         outputs=[audio_output, download_output],
     )
-
 
 
 @click.command()
