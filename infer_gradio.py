@@ -44,7 +44,6 @@ from sovits_svc.vits.models import SynthesizerInfer
 from sovits_svc.pitch import load_csv_pitch
 
 
-
 # load models
 
 vocoder = load_vocoder()
