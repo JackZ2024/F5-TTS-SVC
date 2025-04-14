@@ -351,7 +351,7 @@ class sovits_parms():
         self.vec = None
         self.pit = None
         self.shift = 0
-        self.pit_type = 'sing' # (sing or voice)
+        self.pit_type = 'rmvpe' # (sing or voice)
         self.enable_retrieval = False
         self.retrieval_index_prefix = ""
         self.retrieval_ratio = 0.5
@@ -840,6 +840,7 @@ F5-TTS + SOVITS
             value=speaker_model,
             label="音频转换音色选择",
             visible=True,
+            allow_custom_value=True,
         )
         password_input = gr.Textbox(
             label="解压密码:",
