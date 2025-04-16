@@ -9,6 +9,8 @@ results/
 myenv/
 F5-models/
 sovits-models/
+rvc-models/
+models/
 gen_audio/
 last_audio/
 refs/

@@ -39,3 +39,9 @@ wget
 praat-parselmouth
 py7zr
 huggingface_hub
+
+# RVC
+noisereduce
+pedalboard
+torchcrepe==0.0.23
+torchfcpe
