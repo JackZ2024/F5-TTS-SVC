@@ -15,7 +15,6 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-from cached_path import cached_path
 import gdown
 import csv
 import py7zr
@@ -76,44 +75,41 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
     # model_dict
     ckpt_path = model_dict["model"]
     vocab_path = model_dict["vocab"]
-    if ckpt_path.startswith("hf://"):
-        ckpt_path = str(cached_path(ckpt_path))
-    else:
-        if not os.path.exists(vocab_path):
-            # 如果模型不存在，就根据链接下载
-            model_url = model_dict["model_url"]
-            if model_url != "":
-                show_info("下载模型中……")
-                file_id = get_drive_id(model_url)
-                download_folder = "./F5-models/" + lang
-                download_path = download_folder + "/" + model_name + ".7z"
-                os.makedirs(download_folder, exist_ok=True)
-                if not os.path.exists(download_path):
-                    gdown.download(id=file_id, output=download_path, fuzzy=True)
-                # 解压
-                if password == "":
-                    return None
-                try:
-                    show_info("解压模型中……")
-                    with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
-                        archive.extractall(path=download_folder)
-                    os.remove(download_path)
-                except Exception as e:
-                    print(str(e))
-                    show_info("模型解压失败")
-                    return None
-
-                # 获取model路径
-                model_folder = download_folder + "/" + model_name
-                for model_file in os.listdir(model_folder):
-                    if model_file.lower().endswith(".safetensors") or model_file.lower().endswith(".pt"):
-                        model_dict["model"] = model_folder + "/" + model_file
-                        ckpt_path = model_dict["model"]
-                        break
-
-            if not os.path.exists(vocab_path):
-                print("模型不存在")
+    if not os.path.exists(vocab_path):
+        # 如果模型不存在，就根据链接下载
+        model_url = model_dict["model_url"]
+        if model_url != "":
+            show_info("下载模型中……")
+            file_id = get_drive_id(model_url)
+            download_folder = "./F5-models/" + lang
+            download_path = download_folder + "/" + model_name + ".7z"
+            os.makedirs(download_folder, exist_ok=True)
+            if not os.path.exists(download_path):
+                gdown.download(id=file_id, output=download_path, fuzzy=True)
+            # 解压
+            if password == "":
                 return None
+            try:
+                show_info("解压模型中……")
+                with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
+                    archive.extractall(path=download_folder)
+                os.remove(download_path)
+            except Exception as e:
+                print(str(e))
+                show_info("模型解压失败")
+                return None
+
+            # 获取model路径
+            model_folder = download_folder + "/" + model_name
+            for model_file in os.listdir(model_folder):
+                if model_file.lower().endswith(".safetensors") or model_file.lower().endswith(".pt"):
+                    model_dict["model"] = model_folder + "/" + model_file
+                    ckpt_path = model_dict["model"]
+                    break
+
+        if not os.path.exists(vocab_path):
+            print("模型不存在")
+            return None
 
     if model_cfg is None:
         model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
@@ -438,6 +434,8 @@ refs_dict = load_refs_list()
 def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
     global sovits_models_dict
     cur_speaker = None
+    model_path = ""
+    speaker_path = ""
     if lang_alone in sovits_models_dict:
         svc_models_list = sovits_models_dict[lang_alone]
         for speaker in svc_models_list:
@@ -460,7 +458,7 @@ def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
             # 解压
             if password == "":
                 gr.Warning("密码为空，请设置解压密码")
-                return False, "", ""
+                return False, None, None
             try:
                 show_info("解压sovits模型中……")
                 with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
@@ -479,7 +477,7 @@ def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
             except Exception as e:
                 print(str(e))
                 show_info("sovits模型解压失败")
-                return False, "", ""
+                return False, None, None
 
     if not os.path.exists(model_path):
         print("sovits模型不存在")
@@ -493,6 +491,8 @@ def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
 def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
     global rvc_models_dict
     cur_speaker = None
+    model_path = ""
+    speaker_path = ""
     if lang_alone in rvc_models_dict:
         svc_models_list = rvc_models_dict[lang_alone]
         for speaker in svc_models_list:
@@ -515,7 +515,7 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
             # 解压
             if password == "":
                 gr.Warning("密码为空，请设置解压密码")
-                return False, "", ""
+                return False, None, None
             try:
                 show_info("解压RVC模型中……")
                 with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
@@ -534,7 +534,7 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
             except Exception as e:
                 print(str(e))
                 show_info("RVC模型解压失败")
-                return False, "", ""
+                return False, None, None
 
     if not os.path.exists(model_path):
         print("RVC模型不存在")
@@ -581,6 +581,16 @@ def download_sovits_models():
     snapshot_download(
         repo_id="Jack202410/sovits-pretrain",
         local_dir='./',
+        local_dir_use_symlinks=False,  # Don't use symlinks
+        local_files_only=False,        # Allow downloading new files
+        ignore_patterns=["*.git*"],    # Ignore git-related files
+        resume_download=True           # Resume interrupted downloads
+    )
+
+def download_applio_models():
+    snapshot_download(
+        repo_id="Jack202410/applio-pretrain",
+        local_dir='./rvc/models',
         local_dir_use_symlinks=False,  # Don't use symlinks
         local_files_only=False,        # Allow downloading new files
         ignore_patterns=["*.git*"],    # Ignore git-related files
@@ -676,6 +686,12 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path):
     return (hp.data.sampling_rate, out_audio)
 
 def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate):
+
+    # 根据需要下载预训练模型
+    rmvpe_pretrain = "./rvc/models/predictors/rmvpe.pt"
+    if not os.path.exists(rmvpe_pretrain):
+        download_applio_models()
+
     kwargs = {
         "audio_input_path": audio_filepath,
         "audio_output_path": "",
@@ -763,7 +779,7 @@ def infer(
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
-        return gr.update(), gr.update(), ""
+        return gr.update(), []
 
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
 
@@ -779,17 +795,17 @@ def infer(
     ema_model = custom_ema_model
     if ema_model is None:
         gr.Warning("模型加载失败")
-        return gr.update(), gr.update(), ""
+        return gr.update(), []
     
     # 检查用户设置的输入框数量是否正常
     try:
         num_input = int(num_input)
         if num_input <= 0 or num_input > 20:
             gr.Warning("输入框数量设置不对")
-            return gr.update(), gr.update(), ""
+            return gr.update(), []
     except ValueError:
         gr.Warning("输入框数量无法转换为数字")
-        return gr.update(), gr.update(), ""
+        return gr.update(), []
     
     # 把所有的输入框的文本都获取出来，汇总到一块，生成时也用总的这个列表，这样方便显示总进度
     # 如果要根据框保存中间结果，那就在生成的过程中判断是第几个框，所以保存每个框里的文本行的数量。
@@ -811,7 +827,7 @@ def infer(
 
     if len(text_box_text_list) == 0:
         gr.Warning("没有要生成的文本")
-        return gr.update(), gr.update(), ref_text, ""
+        return gr.update(), []
     
     # 删除旧的音频文件
     gen_audio_path = "gen_audio"
@@ -828,6 +844,8 @@ def infer(
     # 如果开启了转换功能，那就判断转换模型是否支持改语种，如果不支持就把转换功能关闭
     # 如果支持，就判断模型是否存在，如果不存在，就到网盘下载
     enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info)
+    if model_path is None:
+        return gr.update(), []
 
     # 开始生成
     generated_waves = []
@@ -939,13 +957,13 @@ def infer(
 
     # Save the spectrogram
     # Create a combined spectrogram
-    output_audio_list.extend(segm_audio_list)
-    combined_spectrogram = np.concatenate(spectrograms, axis=1)
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
-        spectrogram_path = tmp_spectrogram.name
-        save_spectrogram(combined_spectrogram, spectrogram_path)
+    # combined_spectrogram = np.concatenate(spectrograms, axis=1)
+    # with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
+    #     spectrogram_path = tmp_spectrogram.name
+    #     save_spectrogram(combined_spectrogram, spectrogram_path)
 
-    return (final_sample_rate, final_waves), spectrogram_path, output_audio_list
+    output_audio_list.extend(segm_audio_list)
+    return (final_sample_rate, final_waves), output_audio_list
 
 
 def create_textboxes(num):
@@ -1264,7 +1282,7 @@ F5-TTS + SOVITS + Applio-RVC
         num_input,
         *gen_texts_input,
     ):
-        audio_out, spectrogram_path, gen_audio_list = infer(
+        audio_out, gen_audio_list = infer(
             ref_audio_input,
             ref_text_input,
             num_input,
