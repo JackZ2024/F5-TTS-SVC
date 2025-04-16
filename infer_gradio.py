@@ -88,6 +88,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
                 gdown.download(id=file_id, output=download_path, fuzzy=True)
             # 解压
             if password == "":
+                gr.Warning("密码为空，请设置解压密码")
                 return None
             try:
                 show_info("解压模型中……")
@@ -493,6 +494,7 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
     cur_speaker = None
     model_path = ""
     speaker_path = ""
+    model_url = ""
     if lang_alone in rvc_models_dict:
         svc_models_list = rvc_models_dict[lang_alone]
         for speaker in svc_models_list:
@@ -548,7 +550,7 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
 def get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info=gr.Info):
 
     if enable_svc:
-        if svc_type == "" or svc_model == "":
+        if svc_type is None or svc_model is None:
             return False, "", ""
         else:
             if svc_type == "Sovits":
