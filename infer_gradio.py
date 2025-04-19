@@ -1200,7 +1200,10 @@ F5-TTS + SOVITS + Applio-RVC
 
     num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
-    generate_btn = gr.Button("合成", variant="primary")
+    with gr.Row():
+        generate_btn = gr.Button("合成", variant="primary")
+        download_all = gr.Button("下载所有输出音频", variant="primary")
+
     with gr.Accordion("高级设置", open=False):
         basic_ref_text_input = gr.Textbox(
             label="参考音频对应文本",
@@ -1326,6 +1329,19 @@ F5-TTS + SOVITS + Applio-RVC
         inputs=intputs,
         outputs=[audio_output, download_output],
     )
+    
+    download_all.click(None, [], [], js="""
+        () => {
+            const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '下载文件').parentElement;
+            const links = component.getElementsByTagName('a');
+            for (let link of links) {
+                if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
+                    link.href = link.href.replace("http:", "https:");
+                }
+                link.click();
+            }
+        }
+    """)
 
 
 @click.command()
