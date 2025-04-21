@@ -845,9 +845,10 @@ def infer(
     
     # 如果开启了转换功能，那就判断转换模型是否支持改语种，如果不支持就把转换功能关闭
     # 如果支持，就判断模型是否存在，如果不存在，就到网盘下载
-    enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info)
-    if model_path is None:
-        return gr.update(), []
+    if enable_svc:
+        enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info)
+        if model_path is None:
+            return gr.update(), []
 
     # 开始生成
     generated_waves = []
