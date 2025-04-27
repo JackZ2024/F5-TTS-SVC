@@ -966,7 +966,7 @@ def infer(
     #     save_spectrogram(combined_spectrogram, spectrogram_path)
 
     output_audio_list.extend(segm_audio_list)
-    return last_gen_audio_path, output_audio_list
+    return (final_sample_rate, final_waves), output_audio_list
 
 
 def create_textboxes(num):
