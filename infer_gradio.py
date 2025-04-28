@@ -1411,18 +1411,18 @@ F5-TTS + SOVITS + Applio-RVC
                 outputs=[audio_output, download_output],
             )
             
-            # download_all.click(None, [], [], js="""
-            #     () => {
-            #         const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '下载文件').parentElement;
-            #         const links = component.getElementsByTagName('a');
-            #         for (let link of links) {
-            #             if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
-            #                 link.href = link.href.replace("http:", "https:");
-            #             }
-            #             link.click();
-            #         }
-            #     }
-            # """)
+            download_all.click(None, [], [], js="""
+                () => {
+                    const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '下载文件').parentElement;
+                    const links = component.getElementsByTagName('a');
+                    for (let link of links) {
+                        if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
+                            link.href = link.href.replace("http:", "https:");
+                        }
+                        link.click();
+                    }
+                }
+            """)
 
         with gr.TabItem("音色转换"):
             def convert_language_change(lang):
@@ -1576,18 +1576,18 @@ F5-TTS + SOVITS + Applio-RVC
                 outputs=[input_convert_audios],
             )
             
-            # download_outputs.click(None, [], [], js="""
-            #     () => {
-            #         const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '输出音频').parentElement;
-            #         const links = component.getElementsByTagName('a');
-            #         for (let link of links) {
-            #             if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
-            #                 link.href = link.href.replace("http:", "https:");
-            #             }
-            #             link.click();
-            #         }
-            #     }
-            # """)
+            download_outputs.click(None, [], [], js="""
+                () => {
+                    const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '输出音频').parentElement;
+                    const links = component.getElementsByTagName('a');
+                    for (let link of links) {
+                        if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
+                            link.href = link.href.replace("http:", "https:");
+                        }
+                        link.click();
+                    }
+                }
+            """)
 
 
 @click.command()
