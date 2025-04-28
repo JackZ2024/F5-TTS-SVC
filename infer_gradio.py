@@ -689,7 +689,7 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
     # write(out_file, hp.data.sampling_rate, out_audio)
     return (hp.data.sampling_rate, out_audio)
 
-def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pitch=0):
+def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pitch=0, split_audio=True):
 
     # 根据需要下载预训练模型
     rmvpe_pretrain = "./rvc/models/predictors/rmvpe.pt"
@@ -709,7 +709,7 @@ def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pi
         "f0_method": "rmvpe",
         "pth_path": model_path,
         "index_path": index_path,
-        "split_audio": True,
+        "split_audio": split_audio,
         "f0_autotune": False,
         "f0_autotune_strength": 1.0,
         "clean_audio": False,
@@ -907,6 +907,17 @@ def infer(
                     os.remove(last_audio_path + "/" + file)
             except:
                 pass
+    tmp_audio_path = "./tmp"
+    if not os.path.exists(tmp_audio_path):
+        os.mkdir(tmp_audio_path)
+    else:
+        # 把里面的东西删除
+        for file in os.listdir(tmp_audio_path):
+            try:
+                if file.endswith(".wav"):
+                    os.remove(tmp_audio_path + "/" + file)
+            except:
+                pass
     
     # 如果开启了转换功能，那就判断转换模型是否支持改语种，如果不支持就把转换功能关闭
     # 如果支持，就判断模型是否存在，如果不存在，就到网盘下载
@@ -944,40 +955,36 @@ def infer(
         generated_waves.append(final_wave)
         spectrograms.append(combined_spectrogram)
 
+        # 把音频转换改为一句一转换，也就是每生成一句音频，就需要在本地保存一下，并进行转换
+        audio_filepath = tmp_audio_path + f"/tmp_audio_{i + 1}.wav"
+
         # 保存中间结果
         if save_line_audio:
             # 按行保存
             audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{i + 1}.wav"
             sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
             segm_audio_list.append(audio_filepath)
-            if enable_svc:
-                if svc_type == "Sovits":
-                    sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
+
+        if enable_svc:
+            if not os.path.exists(audio_filepath):
+                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
+            if svc_type == "Sovits":
+                sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
+                svc_waves.append(audio_wave)
+                svc_sampling_rate = sampling_rate
+            else:
+                sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift, False)
+                if audio_wave is not None:
                     svc_waves.append(audio_wave)
                     svc_sampling_rate = sampling_rate
-                else:
-                    sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift)
-                    if audio_wave is not None:
-                        svc_waves.append(audio_wave)
-                        svc_sampling_rate = sampling_rate
 
-        else:
+        if not save_line_audio:
             # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
             if i == total_box_count - 1:
                 final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
                 audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{cur_box_index}.wav"
                 sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
                 segm_audio_list.append(audio_filepath)
-                if enable_svc:
-                    if svc_type == "Sovits":
-                        sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
-                        svc_waves.append(audio_wave)
-                        svc_sampling_rate = sampling_rate
-                    else:
-                        sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift)
-                        if audio_wave is not None:
-                            svc_waves.append(audio_wave)
-                            svc_sampling_rate = sampling_rate
 
                 if cur_box_index < len(text_box_text_list):
                     start_pos = total_box_count
@@ -1022,13 +1029,6 @@ def infer(
         remove_silence_for_generated_wav(last_gen_audio_path)
         final_waves, _ = torchaudio.load(last_gen_audio_path)
         final_waves = final_waves.squeeze().cpu().numpy()
-
-    # Save the spectrogram
-    # Create a combined spectrogram
-    # combined_spectrogram = np.concatenate(spectrograms, axis=1)
-    # with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
-    #     spectrogram_path = tmp_spectrogram.name
-    #     save_spectrogram(combined_spectrogram, spectrogram_path)
 
     output_audio_list.extend(segm_audio_list)
     return (final_sample_rate, final_waves), output_audio_list
