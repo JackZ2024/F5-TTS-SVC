@@ -13,6 +13,7 @@ rvc-models/
 models/
 gen_audio/
 last_audio/
+convert_audio/
 refs/
 runtime/
 hubert_pretrain/
