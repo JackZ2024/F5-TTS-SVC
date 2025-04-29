@@ -107,7 +107,9 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
                 if model_file.lower().endswith(".safetensors") or model_file.lower().endswith(".pt"):
                     model_dict["model"] = model_folder + "/" + model_file
                     ckpt_path = model_dict["model"]
-                    break
+                elif model_file.lower().endswith(".txt"):
+                    vocab_path = model_folder + "/" + model_file
+                    model_dict["vocab"] = vocab_path
 
         if not os.path.exists(vocab_path):
             print("模型不存在")
@@ -132,11 +134,19 @@ def load_F5_models_from_csv():
             if model_name == "" or model_lang == "" or model_url == "":
                 continue
 
-            vocab_path = "./F5-models/" + model_lang + "/" + model_name + "/vocab.txt"
+            model_path = ""
+            vocab_path = ""
+            model_folder = "./F5-models/" + model_lang + "/" + model_name
+            if os.path.exists(model_folder):
+                for file in os.listdir(model_folder):
+                    if file.lower().endswith(".safetensors") or file.lower().endswith(".pt"):
+                        model_path = model_folder + "/" + file
+                    elif file.lower().endswith(".txt"):
+                        vocab_path = model_folder + "/" + file
 
             model_dict = {}
             model_dict["model_name"] = model_name
-            model_dict["model"] = ""
+            model_dict["model"] = model_path
             model_dict["vocab"] = vocab_path
             model_dict["model_url"] = model_url 
             model_dict["lang"] = model_lang
