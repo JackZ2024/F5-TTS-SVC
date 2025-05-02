@@ -532,6 +532,7 @@ sovits_models_dict = load_sovits_models_list()
 applio_models_dict = load_applio_models_list()
 rvc_models_dict = load_rvc_models_list()
 refs_dict = load_refs_list()
+launch_in_service = False
 
 
 def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
@@ -971,16 +972,21 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
         return []
     
     # 删除旧的音频文件
-    convert_audio_path = "convert_audio"
-    if not os.path.exists(convert_audio_path):
-        os.mkdir(convert_audio_path)
+    global launch_in_service
+    if launch_in_service:
+        os.makedirs("./convert_audio", exist_ok=True)
+        convert_audio_path = tempfile.mkdtemp(dir="./convert_audio")
     else:
-        # 把里面的东西删除
-        for file in os.listdir(convert_audio_path):
-            try:
-                os.remove(convert_audio_path + "/" + file)
-            except:
-                pass
+        convert_audio_path = "./convert_audio"
+        if not os.path.exists(convert_audio_path):
+            os.mkdir(convert_audio_path)
+        else:
+            # 把里面的东西删除
+            for file in os.listdir(convert_audio_path):
+                try:
+                    os.remove(convert_audio_path + "/" + file)
+                except:
+                    pass
     
     svc_files = []
     progress=gr.Progress()
@@ -1079,38 +1085,49 @@ def infer(
         return gr.update(), []
     
     # 删除旧的音频文件
-    gen_audio_path = "./gen_audio"
-    if not os.path.exists(gen_audio_path):
-        os.mkdir(gen_audio_path)
+    global launch_in_service
+    if launch_in_service:
+        os.makedirs("./gen_audio", exist_ok=True)
+        gen_audio_path = tempfile.mkdtemp(dir="./gen_audio")
+
+        os.makedirs("./last_audio", exist_ok=True)
+        last_audio_path = tempfile.mkdtemp(dir="./last_audio")
+
+        os.makedirs("./tmp", exist_ok=True)
+        tmp_audio_path = tempfile.mkdtemp(dir="./tmp")
     else:
-        # 把里面的东西删除
-        for file in os.listdir(gen_audio_path):
-            try:
-                os.remove(gen_audio_path + "/" + file)
-            except:
-                pass
-    last_audio_path = "./last_audio"
-    if not os.path.exists(last_audio_path):
-        os.mkdir(last_audio_path)
-    else:
-        # 把里面的东西删除
-        for file in os.listdir(last_audio_path):
-            try:
-                if file.endswith(".wav"):
-                    os.remove(last_audio_path + "/" + file)
-            except:
-                pass
-    tmp_audio_path = "./tmp"
-    if not os.path.exists(tmp_audio_path):
-        os.mkdir(tmp_audio_path)
-    else:
-        # 把里面的东西删除
-        for file in os.listdir(tmp_audio_path):
-            try:
-                if file.endswith(".wav"):
-                    os.remove(tmp_audio_path + "/" + file)
-            except:
-                pass
+        gen_audio_path = "./gen_audio"
+        if not os.path.exists(gen_audio_path):
+            os.mkdir(gen_audio_path)
+        else:
+            # 把里面的东西删除
+            for file in os.listdir(gen_audio_path):
+                try:
+                    os.remove(gen_audio_path + "/" + file)
+                except:
+                    pass
+        last_audio_path = "./last_audio"
+        if not os.path.exists(last_audio_path):
+            os.mkdir(last_audio_path)
+        else:
+            # 把里面的东西删除
+            for file in os.listdir(last_audio_path):
+                try:
+                    if file.endswith(".wav"):
+                        os.remove(last_audio_path + "/" + file)
+                except:
+                    pass
+        tmp_audio_path = "./tmp"
+        if not os.path.exists(tmp_audio_path):
+            os.mkdir(tmp_audio_path)
+        else:
+            # 把里面的东西删除
+            for file in os.listdir(tmp_audio_path):
+                try:
+                    if file.endswith(".wav"):
+                        os.remove(tmp_audio_path + "/" + file)
+                except:
+                    pass
     
     # 如果开启了转换功能，那就判断转换模型是否支持改语种，如果不支持就把转换功能关闭
     # 如果支持，就判断模型是否存在，如果不存在，就到网盘下载
@@ -1192,32 +1209,26 @@ def infer(
     output_audio_list = []
     if enable_svc:
         # 导出合并后的24Khz音频
-        last_orgi_audio_path = f"last_audio/{model_name}_orgi_audio.wav"
+        last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
-            if not os.path.exists("last_audio"):
-                os.mkdir("last_audio")
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
             sf.write(last_orgi_audio_path, final_waves, final_sample_rate, 'PCM_24')
             output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
-        last_gen_audio_path = f"last_audio/{svc_model}_{svc_type.lower()}_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/{svc_model}_{svc_type.lower()}_audio.wav"
         final_waves = None
         if len(svc_waves) > 0:
-            if not os.path.exists("last_audio"):
-                os.mkdir("last_audio")
             final_waves = get_final_wave(cross_fade_duration, svc_waves, svc_sampling_rate)
             sf.write(last_gen_audio_path, final_waves, svc_sampling_rate, 'PCM_24')
             final_sample_rate = svc_sampling_rate
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = f"last_audio/{model_name}_orgi_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
-            if not os.path.exists("last_audio"):
-                os.mkdir("last_audio")
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
             sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_24')
             output_audio_list.append(last_gen_audio_path)
@@ -1847,8 +1858,17 @@ F5-TTS + SOVITS + Applio + RVC
     default=False,
     help="Automatically launch the interface in the default web browser",
 )
-def main(port, host, share, api, root_path, inbrowser):
+@click.option(
+    "--inservice",
+    "-s",
+    is_flag=True,
+    default=False,
+    help="Launch in service",
+)
+def main(port, host, share, api, root_path, inbrowser, inservice):
     global app
+    global launch_in_service
+    launch_in_service = inservice
     print("Starting app...")
     app.queue(api_open=api).launch(
         server_name=host,
