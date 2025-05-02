@@ -10,6 +10,7 @@ myenv/
 F5-models/
 sovits-models/
 rvc-models/
+applio-models/
 models/
 gen_audio/
 last_audio/
@@ -20,6 +21,8 @@ hubert_pretrain/
 rmvpe_pretrain/
 whisper_pretrain/
 temp/
+tmp/
+assets/
 
 
 # Byte-compiled / optimized / DLL files
