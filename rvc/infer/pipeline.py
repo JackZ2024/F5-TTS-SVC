@@ -311,7 +311,7 @@ class Pipeline:
             p_len: Desired length of the F0 output.
             hop_length: Hop length for F0 estimation methods.
         """
-        methods_str = re.search("hybrid\[(.+)\]", methods_str)
+        methods_str = re.search(r"hybrid\[(.+)\]", methods_str)
         if methods_str:
             methods = [method.strip() for method in methods_str.group(1).split("+")]
         f0_computation_stack = []
