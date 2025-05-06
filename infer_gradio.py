@@ -1192,6 +1192,8 @@ def infer(
                 if audio_wave is not None:
                     svc_waves.append(audio_wave)
                     svc_sampling_rate = sampling_rate
+                else:
+                    print("转换失败-----")
 
         if not save_line_audio:
             # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
@@ -1262,7 +1264,7 @@ def load_ref_txt(ref_txt_path):
             txt = f.read()
     return txt
 
-with gr.Blocks(title="F5-TTS-SVC") as app:
+with gr.Blocks(title="F5-TTS-SVC_v3") as app:
     gr.Markdown(
         """
 # 自定义 F5 TTS + SVC
@@ -1416,6 +1418,7 @@ F5-TTS + SOVITS + Applio + RVC
         def_svc_type = None,
         speaker_models = [], 
         speaker_model = None
+        def_lang = ""
 
     with gr.Tabs():
         with gr.TabItem("F5-TTS + SVC"):
@@ -1469,7 +1472,7 @@ F5-TTS + SOVITS + Applio + RVC
                     label="音调调整",
                     minimum=-12,
                     maximum=12,
-                    value=00,
+                    value=0,
                     step=1,
                     info="音调偏移",
                     scale=2
@@ -1478,7 +1481,7 @@ F5-TTS + SOVITS + Applio + RVC
                     label="语搜索特征比率",
                     minimum=0,
                     maximum=1,
-                    value=0.75,
+                    value=0,
                     step=0.01,
                     info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
                     interactive=(def_svc_type=="Applio" or def_svc_type=="RVC"),
@@ -1772,7 +1775,7 @@ F5-TTS + SOVITS + Applio + RVC
                     label="音调调整",
                     minimum=-12,
                     maximum=12,
-                    value=00,
+                    value=0,
                     step=1,
                     info="音调偏移",
                 )
@@ -1780,7 +1783,7 @@ F5-TTS + SOVITS + Applio + RVC
                     label="语搜索特征比率",
                     minimum=0,
                     maximum=1,
-                    value=0.75,
+                    value=0,
                     step=0.01,
                     info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
                     interactive=(def_svc_type=="Applio" or def_svc_type=="RVC"),
