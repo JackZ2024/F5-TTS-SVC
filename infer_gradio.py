@@ -765,7 +765,7 @@ def download_applio_models():
 
 def download_rvc_models():
     snapshot_download(
-        repo_id="Jack202410/rvc-pretrain",
+        repo_id="Jack202410/rvc_pretrain2",
         local_dir='./infer/assets',
         local_dir_use_symlinks=False,  # Don't use symlinks
         local_files_only=False,        # Allow downloading new files

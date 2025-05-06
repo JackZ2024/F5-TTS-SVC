@@ -33,7 +33,7 @@ omegaconf
 # ruamel.yaml
 # resampy
 # chardet
-faiss-cpu==1.7.4
+faiss-cpu
 gdown
 wget
 praat-parselmouth
