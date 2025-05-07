@@ -1257,6 +1257,9 @@ def create_textboxes(num):
     except ValueError:
         return [gr.update(visible=False) for _ in range(20)]
     
+def clear_txt_boxs():
+    return [gr.update(value="") for _ in range(20)]
+
 def load_ref_txt(ref_txt_path):
     txt = ""
     if os.path.exists(ref_txt_path):
@@ -1508,6 +1511,7 @@ F5-TTS + SOVITS + Applio + RVC
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
             with gr.Row():
+                clear_box_btn = gr.Button("清空文本框", variant="primary")
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载所有输出音频", variant="primary")
 
@@ -1638,6 +1642,11 @@ F5-TTS + SOVITS + Applio + RVC
                 basic_tts,
                 inputs=intputs,
                 outputs=[audio_output, download_output],
+            )
+
+            clear_box_btn.click(
+                clear_txt_boxs,
+                outputs=textboxes,
             )
             
             download_all.click(None, [], [], js="""
