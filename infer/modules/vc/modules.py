@@ -119,79 +119,79 @@ class VC:
         if input_audio_path is None:
             return "You need to upload an audio", None
         f0_up_key = int(f0_up_key)
-        # try:
-        audio = load_audio(input_audio_path, 16000)
-        audio_max = np.abs(audio).max() / 0.95
-        if audio_max > 1:
-            audio /= audio_max
-        times = [0, 0, 0]
+        try:
+            audio = load_audio(input_audio_path, 16000)
+            audio_max = np.abs(audio).max() / 0.95
+            if audio_max > 1:
+                audio /= audio_max
+            times = [0, 0, 0]
 
-        if self.hubert_model is None:
-            self.hubert_model = load_hubert(self.config)
+            if self.hubert_model is None:
+                self.hubert_model = load_hubert(self.config)
 
-        if file_index:
-            file_index = (
-                file_index.strip(" ")
-                .strip('"')
-                .strip("\n")
-                .strip('"')
-                .strip(" ")
-                .replace("trained", "added")
-            )
-        elif file_index2:
-            file_index = file_index2
-        else:
-            file_index = ""  # 防止小白写错，自动帮他替换掉
+            if file_index:
+                file_index = (
+                    file_index.strip(" ")
+                    .strip('"')
+                    .strip("\n")
+                    .strip('"')
+                    .strip(" ")
+                    .replace("trained", "added")
+                )
+            elif file_index2:
+                file_index = file_index2
+            else:
+                file_index = ""  # 防止小白写错，自动帮他替换掉
 
-        if split_audio:
-            chunks, intervals = process_audio(audio, 16000)
-            print(f"Audio split into {len(chunks)} chunks for processing.")
-        else:
-            chunks = []
-            chunks.append(audio)
-
-        converted_chunks = []
-        for c in chunks:
-            audio_opt = self.pipeline.pipeline(
-                self.hubert_model,
-                self.net_g,
-                spk,
-                c,
-                input_audio_path,
-                times,
-                f0_up_key,
-                f0_method,
-                file_index,
-                index_rate,
-                self.if_f0,
-                filter_radius,
-                self.tgt_sr,
-                resample_sr,
-                rms_mix_rate,
-                self.version,
-                protect,
-                f0_file,
-            )
-
-            converted_chunks.append(audio_opt)
             if split_audio:
-                print(f"Converted audio chunk {len(converted_chunks)}")
+                chunks, intervals = process_audio(audio, 16000)
+                print(f"Audio split into {len(chunks)} chunks for processing.")
+            else:
+                chunks = []
+                chunks.append(audio)
 
-        if split_audio:
-            audio_opt = merge_audio(chunks, converted_chunks, intervals, 16000, self.tgt_sr)
-        else:
-            audio_opt = converted_chunks[0]
+            converted_chunks = []
+            for c in chunks:
+                audio_opt = self.pipeline.pipeline(
+                    self.hubert_model,
+                    self.net_g,
+                    spk,
+                    c,
+                    input_audio_path,
+                    times,
+                    f0_up_key,
+                    f0_method,
+                    file_index,
+                    index_rate,
+                    self.if_f0,
+                    filter_radius,
+                    self.tgt_sr,
+                    resample_sr,
+                    rms_mix_rate,
+                    self.version,
+                    protect,
+                    f0_file,
+                )
 
-        if self.tgt_sr != resample_sr >= 16000:
-            tgt_sr = resample_sr
-        else:
-            tgt_sr = self.tgt_sr
+                converted_chunks.append(audio_opt)
+                if split_audio:
+                    print(f"Converted audio chunk {len(converted_chunks)}")
 
-        return tgt_sr, audio_opt
-        # except:
-        #     info = traceback.format_exc()
-        #     logger.warning(info)
-        #     return None, None
+            if split_audio:
+                audio_opt = merge_audio(chunks, converted_chunks, intervals, 16000, self.tgt_sr)
+            else:
+                audio_opt = converted_chunks[0]
+
+            if self.tgt_sr != resample_sr >= 16000:
+                tgt_sr = resample_sr
+            else:
+                tgt_sr = self.tgt_sr
+
+            return tgt_sr, audio_opt
+        except:
+            info = traceback.format_exc()
+            logger.warning(info)
+            return None, None
 
     def vc_multi(
         self,
