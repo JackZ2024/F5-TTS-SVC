@@ -1511,7 +1511,7 @@ F5-TTS + SOVITS + Applio + RVC
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
             with gr.Row():
-                clear_box_btn = gr.Button("清空文本框", variant="primary")
+                clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载所有输出音频", variant="primary")
 
