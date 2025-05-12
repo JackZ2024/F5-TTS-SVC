@@ -100,6 +100,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
                 gdown.download(id=file_id, output=download_path, fuzzy=True)
             # 解压
             if password == "":
+                print("密码为空，请设置解压密码")
                 gr.Warning("密码为空，请设置解压密码")
                 return None
             try:
@@ -561,6 +562,7 @@ def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
                 gdown.download(id=file_id, output=download_path, fuzzy=True)
             # 解压
             if password == "":
+                print("密码为空，请设置解压密码")
                 gr.Warning("密码为空，请设置解压密码")
                 return False, None, None
             try:
@@ -619,6 +621,7 @@ def get_applio_model(svc_model, lang_alone, password, show_info=gr.Info):
                 gdown.download(id=file_id, output=download_path, fuzzy=True)
             # 解压
             if password == "":
+                print("密码为空，请设置解压密码")
                 gr.Warning("密码为空，请设置解压密码")
                 return False, None, None
             try:
@@ -677,6 +680,7 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
                 gdown.download(id=file_id, output=download_path, fuzzy=True)
             # 解压
             if password == "":
+                print("密码为空，请设置解压密码")
                 gr.Warning("密码为空，请设置解压密码")
                 return False, None, None
             try:
