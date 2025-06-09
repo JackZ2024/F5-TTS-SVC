@@ -7,20 +7,18 @@
 import os
 import sys
 
+
 sys.path.append(os.getcwd())
 
 import json
 from concurrent.futures import ProcessPoolExecutor
 from importlib.resources import files
 from pathlib import Path
-from tqdm import tqdm
 
 from datasets.arrow_writer import ArrowWriter
+from tqdm import tqdm
 
-from f5_tts.model.utils import (
-    repetition_found,
-    convert_char_to_pinyin,
-)
+from f5_tts.model.utils import convert_char_to_pinyin, repetition_found
 
 
 out_zh = {
@@ -198,7 +196,7 @@ def main():
 
     print(f"\nFor {dataset_name}, sample count: {len(result)}")
     print(f"For {dataset_name}, vocab size is: {len(text_vocab_set)}")
-    print(f"For {dataset_name}, total {sum(duration_list)/3600:.2f} hours")
+    print(f"For {dataset_name}, total {sum(duration_list) / 3600:.2f} hours")
     if "ZH" in langs:
         print(f"Bad zh transcription case: {total_bad_case_zh}")
     if "EN" in langs:

@@ -148,9 +148,9 @@ def get_inference_prompt(
 
         # deal with batch
         assert infer_batch_size > 0, "infer_batch_size should be greater than 0."
-        assert (
-            min_tokens <= total_mel_len <= max_tokens
-        ), f"Audio {utt} has duration {total_mel_len*hop_length//target_sample_rate}s out of range [{min_secs}, {max_secs}]."
+        assert min_tokens <= total_mel_len <= max_tokens, (
+            f"Audio {utt} has duration {total_mel_len * hop_length // target_sample_rate}s out of range [{min_secs}, {max_secs}]."
+        )
         bucket_i = math.floor((total_mel_len - min_tokens) / (max_tokens - min_tokens + 1) * num_buckets)
 
         utts[bucket_i].append(utt)
@@ -389,10 +389,10 @@ def run_sim(args):
         model = model.cuda(device)
     model.eval()
 
-    sims = []
-    for wav1, wav2, truth in tqdm(test_set):
-        wav1, sr1 = torchaudio.load(wav1)
-        wav2, sr2 = torchaudio.load(wav2)
+    sim_results = []
+    for gen_wav, prompt_wav, truth in tqdm(test_set):
+        wav1, sr1 = torchaudio.load(gen_wav)
+        wav2, sr2 = torchaudio.load(prompt_wav)
 
         resample1 = torchaudio.transforms.Resample(orig_freq=sr1, new_freq=16000)
         resample2 = torchaudio.transforms.Resample(orig_freq=sr2, new_freq=16000)
@@ -408,6 +408,11 @@ def run_sim(args):
 
         sim = F.cosine_similarity(emb1, emb2)[0].item()
         # print(f"VSim score between two audios: {sim:.4f} (-1.0, 1.0).")
-        sims.append(sim)
+        sim_results.append(
+            {
+                "wav": Path(gen_wav).stem,
+                "sim": sim,
+            }
+        )
 
-    return sims
+    return sim_results

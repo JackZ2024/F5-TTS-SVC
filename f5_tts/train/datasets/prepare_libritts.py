@@ -1,15 +1,17 @@
 import os
 import sys
 
+
 sys.path.append(os.getcwd())
 
 import json
 from concurrent.futures import ProcessPoolExecutor
 from importlib.resources import files
 from pathlib import Path
-from tqdm import tqdm
+
 import soundfile as sf
 from datasets.arrow_writer import ArrowWriter
+from tqdm import tqdm
 
 
 def deal_with_audio_dir(audio_dir):
@@ -72,7 +74,7 @@ def main():
 
     print(f"\nFor {dataset_name}, sample count: {len(result)}")
     print(f"For {dataset_name}, vocab size is: {len(text_vocab_set)}")
-    print(f"For {dataset_name}, total {sum(duration_list)/3600:.2f} hours")
+    print(f"For {dataset_name}, total {sum(duration_list) / 3600:.2f} hours")
 
 
 if __name__ == "__main__":

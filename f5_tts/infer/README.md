@@ -4,16 +4,17 @@ The pretrained model checkpoints can be reached at [🤗 Hugging Face](https://h
 
 **More checkpoints with whole community efforts can be found in [SHARED.md](SHARED.md), supporting more languages.**
 
-Currently support **30s for a single** generation, which is the **total length** including both prompt and output audio. However, you can provide `infer_cli` and `infer_gradio` with longer text, will automatically do chunk generation. Long reference audio will be **clip short to ~15s**.
+Currently support **30s for a single** generation, which is the **total length** (same logic if `fix_duration`) including both prompt and output audio. However, `infer_cli` and `infer_gradio` will automatically do chunk generation for longer text. Long reference audio will be **clip short to ~12s**.
 
 To avoid possible inference failures, make sure you have seen through the following instructions.
 
-- Use reference audio <15s and leave some silence (e.g. 1s) at the end. Otherwise there is a risk of truncating in the middle of word, leading to suboptimal generation.
-- Uppercased letters will be uttered letter by letter, so use lowercased letters for normal words. 
-- Add some spaces (blank: " ") or punctuations (e.g. "," ".") to explicitly introduce some pauses.
-- Preprocess numbers to Chinese letters if you want to have them read in Chinese, otherwise in English.
-- If the generation output is blank (pure silence), check for ffmpeg installation (various tutorials online, blogs, videos, etc.).
-- Try turn off use_ema if using an early-stage finetuned checkpoint (which goes just few updates).
+- Use reference audio <12s and leave proper silence space (e.g. 1s) at the end. Otherwise there is a risk of truncating in the middle of word, leading to suboptimal generation.
+- <ins>Uppercased letters</ins> (best with form like K.F.C.) will be uttered letter by letter, and lowercased letters used for common words. 
+- Add some spaces (blank: " ") or punctuations (e.g. "," ".") <ins>to explicitly introduce some pauses</ins>.
+- If English punctuation marks the end of a sentence, make sure there is a space " " after it. Otherwise not regarded as when chunk.
+- <ins>Preprocess numbers</ins> to Chinese letters if you want to have them read in Chinese, otherwise in English.
+- If the generation output is blank (pure silence), <ins>check for FFmpeg installation</ins>.
+- Try <ins>turn off `use_ema` if using an early-stage</ins> finetuned checkpoint (which goes just few updates).
 
 
 ## Gradio App
@@ -23,7 +24,7 @@ Currently supported features:
 - Basic TTS with Chunk Inference
 - Multi-Style / Multi-Speaker Generation
 - Voice Chat powered by Qwen2.5-3B-Instruct
-- [Custom inference with more language support](src/f5_tts/infer/SHARED.md)
+- [Custom inference with more language support](SHARED.md)
 
 The cli command `f5-tts_infer-gradio` equals to `python src/f5_tts/infer/infer_gradio.py`, which launches a Gradio APP (web interface) for inference.
 
@@ -68,14 +69,16 @@ Basically you can inference with flags:
 ```bash
 # Leave --ref_text "" will have ASR model transcribe (extra GPU memory usage)
 f5-tts_infer-cli \
---model "F5-TTS" \
+--model F5TTS_v1_Base \
 --ref_audio "ref_audio.wav" \
 --ref_text "The content, subtitle or transcription of reference audio." \
 --gen_text "Some text you want TTS model generate for you."
 
-# Choose Vocoder
-f5-tts_infer-cli --vocoder_name bigvgan --load_vocoder_from_local --ckpt_file <YOUR_CKPT_PATH, eg:ckpts/F5TTS_Base_bigvgan/model_1250000.pt>
-f5-tts_infer-cli --vocoder_name vocos --load_vocoder_from_local --ckpt_file <YOUR_CKPT_PATH, eg:ckpts/F5TTS_Base/model_1200000.safetensors>
+# Use BigVGAN as vocoder. Currently only support F5TTS_Base. 
+f5-tts_infer-cli --model F5TTS_Base --vocoder_name bigvgan --load_vocoder_from_local
+
+# Use custom path checkpoint, e.g.
+f5-tts_infer-cli --ckpt_file ckpts/F5TTS_v1_Base/model_1250000.safetensors
 
 # More instructions
 f5-tts_infer-cli --help
@@ -90,8 +93,8 @@ f5-tts_infer-cli -c custom.toml
 For example, you can use `.toml` to pass in variables, refer to `src/f5_tts/infer/examples/basic/basic.toml`:
 
 ```toml
-# F5-TTS | E2-TTS
-model = "F5-TTS"
+# F5TTS_v1_Base | E2TTS_Base
+model = "F5TTS_v1_Base"
 ref_audio = "infer/examples/basic/basic_ref_en.wav"
 # If an empty "", transcribes the reference audio automatically.
 ref_text = "Some call me nature, others call me mother nature."
@@ -105,8 +108,8 @@ output_dir = "tests"
 You can also leverage `.toml` file to do multi-style generation, refer to `src/f5_tts/infer/examples/multi/story.toml`.
 
 ```toml
-# F5-TTS | E2-TTS
-model = "F5-TTS"
+# F5TTS_v1_Base | E2TTS_Base
+model = "F5TTS_v1_Base"
 ref_audio = "infer/examples/multi/main.flac"
 # If an empty "", transcribes the reference audio automatically.
 ref_text = ""
@@ -126,6 +129,44 @@ ref_text = ""
 ```
 You should mark the voice with `[main]` `[town]` `[country]` whenever you want to change voice, refer to `src/f5_tts/infer/examples/multi/story.txt`.
 
+## API Usage
+
+```python
+from importlib.resources import files
+from f5_tts.api import F5TTS
+
+f5tts = F5TTS()
+wav, sr, spec = f5tts.infer(
+    ref_file=str(files("f5_tts").joinpath("infer/examples/basic/basic_ref_en.wav")),
+    ref_text="some call me nature, others call me mother nature.",
+    gen_text="""I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring. Respect me and I'll nurture you; ignore me and you shall face the consequences.""",
+    file_wave=str(files("f5_tts").joinpath("../../tests/api_out.wav")),
+    file_spec=str(files("f5_tts").joinpath("../../tests/api_out.png")),
+    seed=None,
+)
+```
+Check [api.py](../api.py) for more details.
+
+## TensorRT-LLM Deployment
+
+See [detailed instructions](../runtime/triton_trtllm/README.md) for more information.
+
+## Socket Real-time Service
+
+Real-time voice output with chunk stream:
+
+```bash
+# Start socket server
+python src/f5_tts/socket_server.py
+
+# If PyAudio not installed
+sudo apt-get install portaudio19-dev
+pip install pyaudio
+
+# Communicate with socket client
+python src/f5_tts/socket_client.py
+```
+
 ## Speech Editing
 
 To test speech editing capabilities, use the following command:
@@ -133,87 +174,4 @@ To test speech editing capabilities, use the following command:
 ```bash
 python src/f5_tts/infer/speech_edit.py
 ```
-
-## Socket Realtime Client
-
-To communicate with socket server you need to run 
-```bash
-python src/f5_tts/socket_server.py
-```
-
-<details>
-<summary>Then create client to communicate</summary>
-
-```bash
-# If PyAudio not installed
-sudo apt-get install portaudio19-dev
-pip install pyaudio
-```
-
-``` python
-# Create the socket_client.py
-import socket
-import asyncio
-import pyaudio
-import numpy as np
-import logging
-import time
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-async def listen_to_F5TTS(text, server_ip="localhost", server_port=9998):
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    await asyncio.get_event_loop().run_in_executor(None, client_socket.connect, (server_ip, int(server_port)))
-
-    start_time = time.time()
-    first_chunk_time = None
-
-    async def play_audio_stream():
-        nonlocal first_chunk_time
-        p = pyaudio.PyAudio()
-        stream = p.open(format=pyaudio.paFloat32, channels=1, rate=24000, output=True, frames_per_buffer=2048)
-
-        try:
-            while True:
-                data = await asyncio.get_event_loop().run_in_executor(None, client_socket.recv, 8192)
-                if not data:
-                    break
-                if data == b"END":
-                    logger.info("End of audio received.")
-                    break
-
-                audio_array = np.frombuffer(data, dtype=np.float32)
-                stream.write(audio_array.tobytes())
-
-                if first_chunk_time is None:
-                    first_chunk_time = time.time()
-
-        finally:
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
-
-        logger.info(f"Total time taken: {time.time() - start_time:.4f} seconds")
-
-    try:
-        data_to_send = f"{text}".encode("utf-8")
-        await asyncio.get_event_loop().run_in_executor(None, client_socket.sendall, data_to_send)
-        await play_audio_stream()
-
-    except Exception as e:
-        logger.error(f"Error in listen_to_F5TTS: {e}")
-
-    finally:
-        client_socket.close()
-
-
-if __name__ == "__main__":
-    text_to_send = "As a Reader assistant, I'm familiar with new technology. which are key to its improved performance in terms of both training speed and inference efficiency. Let's break down the components"
-
-    asyncio.run(listen_to_F5TTS(text_to_send))
-```
-
-</details>
 

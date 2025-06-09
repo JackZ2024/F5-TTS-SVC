@@ -1,5 +1,11 @@
 # Training
 
+Check your FFmpeg installation:
+```bash
+ffmpeg -version
+```
+If not found, install it first (or skip assuming you know of other backends available).
+
 ## Prepare Dataset
 
 Example data processing scripts, and you may tailor your own one along with a Dataset class in `src/f5_tts/model/dataset.py`.
@@ -40,10 +46,10 @@ Once your datasets are prepared, you can start the training process.
 accelerate config
 
 # .yaml files are under src/f5_tts/configs directory
-accelerate launch src/f5_tts/train/train.py --config-name F5TTS_Base_train.yaml
+accelerate launch src/f5_tts/train/train.py --config-name F5TTS_v1_Base.yaml
 
 # possible to overwrite accelerate and hydra config
-accelerate launch --mixed_precision=fp16 src/f5_tts/train/train.py --config-name F5TTS_Small_train.yaml ++datasets.batch_size_per_gpu=19200
+accelerate launch --mixed_precision=fp16 src/f5_tts/train/train.py --config-name F5TTS_v1_Base.yaml ++datasets.batch_size_per_gpu=19200
 ```
 
 ### 2. Finetuning practice
@@ -51,9 +57,13 @@ Discussion board for Finetuning [#57](https://github.com/SWivid/F5-TTS/discussio
 
 Gradio UI training/finetuning with `src/f5_tts/train/finetune_gradio.py` see [#143](https://github.com/SWivid/F5-TTS/discussions/143).
 
-The `use_ema = True` is harmful for early-stage finetuned checkpoints (which goes just few updates, thus ema weights still dominated by pretrained ones), try turn it off and see if provide better results.
+If want to finetune with a variant version e.g. *F5TTS_v1_Base_no_zero_init*, manually download pretrained checkpoint from model weight repository and fill in the path correspondingly on web interface.
 
-### 3. Wandb Logging
+If use tensorboard as logger, install it first with `pip install tensorboard`.
+
+<ins>The `use_ema = True` might be harmful for early-stage finetuned checkpoints</ins> (which goes just few updates, thus ema weights still dominated by pretrained ones), try turn it off with finetune gradio option or `load_model(..., use_ema=False)`, see if offer better results.
+
+### 3. W&B Logging
 
 The `wandb/` dir will be created under path you run training/finetuning scripts.
 
@@ -62,7 +72,7 @@ By default, the training script does NOT use logging (assuming you didn't manual
 To turn on wandb logging, you can either:
 
 1. Manually login with `wandb login`: Learn more [here](https://docs.wandb.ai/ref/cli/wandb-login)
-2. Automatically login programmatically by setting an environment variable: Get an API KEY at https://wandb.ai/site/ and set the environment variable as follows:
+2. Automatically login programmatically by setting an environment variable: Get an API KEY at https://wandb.ai/authorize and set the environment variable as follows:
 
 On Mac & Linux:
 
@@ -75,7 +85,7 @@ On Windows:
 ```
 set WANDB_API_KEY=<YOUR WANDB API KEY>
 ```
-Moreover, if you couldn't access Wandb and want to log metrics offline, you can the environment variable as follows:
+Moreover, if you couldn't access W&B and want to log metrics offline, you can set the environment variable as follows:
 
 ```
 export WANDB_MODE=offline

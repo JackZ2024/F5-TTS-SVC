@@ -5,13 +5,11 @@ import random
 from collections import defaultdict
 from importlib.resources import files
 
-import torch
-from torch.nn.utils.rnn import pad_sequence
-from einops import reduce
-import einx
-
 import jieba
-from pypinyin import lazy_pinyin, Style
+import torch
+from pypinyin import Style, lazy_pinyin
+from torch.nn.utils.rnn import pad_sequence
+
 
 # seed everything
 
@@ -38,6 +36,7 @@ def default(v, d):
 
 
 # tensor helpers
+
 
 def lens_to_mask(t: int["b"], length: int | None = None) -> bool["b n"]:  # noqa: F722 F821
     if not exists(length):
@@ -70,20 +69,11 @@ def maybe_masked_mean(t: float["b n d"], mask: bool["b n"] = None) -> float["b d
     if not exists(mask):
         return t.mean(dim=1)
 
-    t = einx.where('b n, b n d, -> b n d', mask, t, 0.)
-    num = reduce(t, 'b n d -> b d', 'sum')
-    den = reduce(mask.float(), 'b n -> b', 'sum')
+    t = torch.where(mask[:, :, None], t, torch.tensor(0.0, device=t.device))
+    num = t.sum(dim=1)
+    den = mask.float().sum(dim=1)
 
-    return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
-
-    # t = torch.where(mask[:, :, None], t, torch.tensor(0.0, device=t.device))
-    # print(f"t: {t.shape}")
-    # num = t.sum(dim=1)
-    # print(f"num: {num.shape} {num}")
-    # den = mask.float().sum(dim=1)
-    # print(f"den: {den.shape} {den}")
-
-    # return num / den.clamp(min=1.0)
+    return num / den.clamp(min=1.0)
 
 
 # simple utf-8 tokenizer, since paper went character based
@@ -142,13 +132,14 @@ def get_tokenizer(dataset_name, tokenizer: str = "pinyin"):
 
 # convert char to pinyin
 
-jieba.initialize()
-print("Word segmentation module jieba initialized.\n")
 
-
-def convert_char_to_pinyin(text_list, polyphone=True, lang=""):
+def convert_char_to_pinyin(text_list, polyphone=True):
+    if jieba.dt.initialized is False:
+        jieba.default_logger.setLevel(50)  # CRITICAL
+        jieba.initialize()
 
     final_text_list = []
+    
     custom_trans = str.maketrans(
         # {";": ",", "“": '"', "”": '"', "‘": "'", "’": "'"}
         {"“": '', "”": '', "\"": ""}
@@ -162,42 +153,27 @@ def convert_char_to_pinyin(text_list, polyphone=True, lang=""):
     for text in text_list:
         char_list = []
         text = text.translate(custom_trans).replace("...", "")
-        if lang.lower() == "thai_v1":
-            texts = text
-            for seg in texts:
-                seg_byte_len = len(bytes(seg, "UTF-8"))
-                if seg_byte_len == len(seg):  # if pure alphabets and symbols
-                    for c in seg:
-                        if c not in "。，、；：？！《》【】—…":
-                            char_list.append(" ")
+        for seg in jieba.cut(text):
+            seg_byte_len = len(bytes(seg, "UTF-8"))
+            if seg_byte_len == len(seg):  # if pure alphabets and symbols
+                if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
+                    char_list.append(" ")
+                char_list.extend(seg)
+            elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
+                seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
+                for i, c in enumerate(seg):
+                    if is_chinese(c):
+                        char_list.append(" ")
+                    char_list.append(seg_[i])
+            else:  # if mixed characters, alphabets and symbols
+                for c in seg:
+                    if ord(c) < 256:
+                        char_list.extend(c)
+                    elif is_chinese(c):
+                        char_list.append(" ")
+                        char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
+                    else:
                         char_list.append(c)
-                elif seg_byte_len == 3 * len(seg):  # if pure thai characters
-                    if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
-                        char_list.append(" ")
-                    char_list.append(seg)
-        else:
-            for seg in jieba.cut(text):
-                seg_byte_len = len(bytes(seg, "UTF-8"))
-                if seg_byte_len == len(seg):  # if pure alphabets and symbols
-                    if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
-                        char_list.append(" ")
-                    char_list.extend(seg)
-                elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
-                    seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
-                    for i, c in enumerate(seg):
-                        if is_chinese(c):
-                            char_list.append(" ")
-                        char_list.append(seg_[i])
-                else:  # if mixed characters, alphabets and symbols
-                    for c in seg:
-                        if ord(c) < 256:
-                            char_list.extend(c)
-                        elif is_chinese(c):
-                            char_list.append(" ")
-                            char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
-                        else:
-                            char_list.append(c)
-
         final_text_list.append(char_list)
 
     return final_text_list
@@ -215,3 +191,22 @@ def repetition_found(text, length=2, tolerance=10):
         if count > tolerance:
             return True
     return False
+
+
+# get the empirically pruned step for sampling
+
+
+def get_epss_timesteps(n, device, dtype):
+    dt = 1 / 32
+    predefined_timesteps = {
+        5: [0, 2, 4, 8, 16, 32],
+        6: [0, 2, 4, 6, 8, 16, 32],
+        7: [0, 2, 4, 6, 8, 16, 24, 32],
+        10: [0, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32],
+        12: [0, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32],
+        16: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32],
+    }
+    t = predefined_timesteps.get(n, [])
+    if not t:
+        return torch.linspace(0, 1, n + 1, device=device, dtype=dtype)
+    return dt * torch.tensor(t, device=device, dtype=dtype)

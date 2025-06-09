@@ -2,36 +2,34 @@ import argparse
 import codecs
 import os
 import re
-import shutil
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
+
 import numpy as np
 import soundfile as sf
 import tomli
-import torch
 from cached_path import cached_path
+from hydra.utils import get_class
 from omegaconf import OmegaConf
 
 from f5_tts.infer.utils_infer import (
-    mel_spec_type,
-    target_rms,
-    cross_fade_duration,
-    nfe_step,
     cfg_strength,
-    sway_sampling_coef,
-    speed,
+    cross_fade_duration,
+    device,
     fix_duration,
-    no_ref_audio,
     infer_process,
     load_model,
     load_vocoder,
+    mel_spec_type,
+    nfe_step,
     preprocess_ref_audio_text,
     remove_silence_for_generated_wav,
+    speed,
+    sway_sampling_coef,
+    target_rms,
 )
-from f5_tts.model import DiT, UNetT
-from f5_tts.model.dur import DurationPredictor, DurationTransformer
-from pathvalidate import sanitize_filename, sanitize_filepath
+
 
 parser = argparse.ArgumentParser(
     prog="python3 infer-cli.py",
@@ -46,13 +44,14 @@ parser.add_argument(
     help="The configuration file, default see infer/examples/basic/basic.toml",
 )
 
+
 # Note. Not to provide default value here in order to read default from config file
 
 parser.add_argument(
     "-m",
     "--model",
     type=str,
-    help="The model name: F5-TTS | E2-TTS",
+    help="The model name: F5TTS_v1_Base | F5TTS_Base | E2TTS_Base | etc.",
 )
 parser.add_argument(
     "-mc",
@@ -65,12 +64,6 @@ parser.add_argument(
     "--ckpt_file",
     type=str,
     help="The path to model checkpoint .pt, leave blank to use default",
-)
-parser.add_argument(
-    "-p_dur",
-    "--dur_ckpt_file",
-    type=str,
-    help="The path to duration model checkpoint .pt, leave blank to use default",
 )
 parser.add_argument(
     "-v",
@@ -132,7 +125,7 @@ parser.add_argument(
 parser.add_argument(
     "--vocoder_name",
     type=str,
-    choices=["vocos", "bigvgan", "bigvgan44k"],
+    choices=["vocos", "bigvgan"],
     help=f"Used vocoder name: vocos | bigvgan, default {mel_spec_type}",
 )
 parser.add_argument(
@@ -171,20 +164,21 @@ parser.add_argument(
     help=f"Fix the total duration (ref and gen audios) in seconds, default {fix_duration}",
 )
 parser.add_argument(
-    "--no_ref_audio",
-    type=bool,
-    help=f"Drop audio prompt",
+    "--device",
+    type=str,
+    help="Specify the device to run on",
 )
 args = parser.parse_args()
+
 
 # config file
 
 config = tomli.load(open(args.config, "rb"))
 
+
 # command-line interface parameters
 
-model = args.model or config.get("model", "F5-TTS")
-model_cfg = args.model_cfg or config.get("model_cfg", str(files("f5_tts").joinpath("configs/F5TTS_Base_train.yaml")))
+model = args.model or config.get("model", "F5TTS_v1_Base")
 ckpt_file = args.ckpt_file or config.get("ckpt_file", "")
 vocab_file = args.vocab_file or config.get("vocab_file", "")
 
@@ -214,7 +208,8 @@ cfg_strength = args.cfg_strength or config.get("cfg_strength", cfg_strength)
 sway_sampling_coef = args.sway_sampling_coef or config.get("sway_sampling_coef", sway_sampling_coef)
 speed = args.speed or config.get("speed", speed)
 fix_duration = args.fix_duration or config.get("fix_duration", fix_duration)
-no_ref_audio = args.no_ref_audio or config.get("no_ref_audio", no_ref_audio)
+device = args.device or config.get("device", device)
+
 
 # patches for pip pkg user
 if "infer/examples/" in ref_audio:
@@ -227,10 +222,12 @@ if "voices" in config:
         if "infer/examples/" in voice_ref_audio:
             config["voices"][voice]["ref_audio"] = str(files("f5_tts").joinpath(f"{voice_ref_audio}"))
 
+
 # ignore gen_text if gen_file provided
 
 if gen_file:
     gen_text = codecs.open(gen_file, "r", "utf-8").read()
+
 
 # output path
 
@@ -238,10 +235,9 @@ wave_path = Path(output_dir) / output_file
 # spectrogram_path = Path(output_dir) / "infer_cli_out.png"
 if save_chunk:
     output_chunk_dir = os.path.join(output_dir, f"{Path(output_file).stem}_chunks")
-    if os.path.exists(output_chunk_dir):
-        shutil.rmtree(output_chunk_dir)
     if not os.path.exists(output_chunk_dir):
         os.makedirs(output_chunk_dir)
+
 
 # load vocoder
 
@@ -249,65 +245,43 @@ if vocoder_name == "vocos":
     vocoder_local_path = "../checkpoints/vocos-mel-24khz"
 elif vocoder_name == "bigvgan":
     vocoder_local_path = "../checkpoints/bigvgan_v2_24khz_100band_256x"
-elif vocoder_name == "bigvgan44k":
-    vocoder_local_path = "../checkpoints/bigvgan_v2_44khz_128band_512x"
 
-vocoder = load_vocoder(vocoder_name=vocoder_name, is_local=load_vocoder_from_local, local_path=vocoder_local_path)
+vocoder = load_vocoder(
+    vocoder_name=vocoder_name, is_local=load_vocoder_from_local, local_path=vocoder_local_path, device=device
+)
+
 
 # load TTS model
 
-if model == "F5-TTS":
-    model_cls = DiT
-    model_cfg = OmegaConf.load(model_cfg).model.arch
-    if not ckpt_file:  # path not specified, download from repo
-        if vocoder_name == "vocos":
-            repo_name = "F5-TTS"
-            exp_name = "F5TTS_Base"
-            ckpt_step = 1200000
-            ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{exp_name}/model_{ckpt_step}.safetensors"))
-            # ckpt_file = f"ckpts/{exp_name}/model_{ckpt_step}.pt"  # .pt | .safetensors; local path
-        elif "bigvgan" in vocoder_name :
-            repo_name = "F5-TTS"
-            exp_name = "F5TTS_Base_bigvgan"
-            ckpt_step = 1250000
-            ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{exp_name}/model_{ckpt_step}.pt"))
+model_cfg = OmegaConf.load(
+    args.model_cfg or config.get("model_cfg", str(files("f5_tts").joinpath(f"configs/{model}.yaml")))
+)
+model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
+model_arc = model_cfg.model.arch
 
-elif model == "E2-TTS":
-    assert args.model_cfg is None, "E2-TTS does not support custom model_cfg yet"
-    assert vocoder_name == "vocos", "E2-TTS only supports vocoder vocos yet"
-    model_cls = UNetT
-    model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
-    if not ckpt_file:  # path not specified, download from repo
-        repo_name = "E2-TTS"
-        exp_name = "E2TTS_Base"
+repo_name, ckpt_step, ckpt_type = "F5-TTS", 1250000, "safetensors"
+
+if model != "F5TTS_Base":
+    assert vocoder_name == model_cfg.model.mel_spec.mel_spec_type
+
+# override for previous models
+if model == "F5TTS_Base":
+    if vocoder_name == "vocos":
         ckpt_step = 1200000
-        ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{exp_name}/model_{ckpt_step}.safetensors"))
-        # ckpt_file = f"ckpts/{exp_name}/model_{ckpt_step}.pt"  # .pt | .safetensors; local path
+    elif vocoder_name == "bigvgan":
+        model = "F5TTS_Base_bigvgan"
+        ckpt_type = "pt"
+elif model == "E2TTS_Base":
+    repo_name = "E2-TTS"
+    ckpt_step = 1200000
+
+if not ckpt_file:
+    ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{model}/model_{ckpt_step}.{ckpt_type}"))
 
 print(f"Using {model}...")
-ema_model = load_model(model_cls, model_cfg, ckpt_file, mel_spec_type=vocoder_name, vocab_file=vocab_file)
-
-dur_model = None
-if args.dur_ckpt_file:
-    vocab = {v: i for i, v in
-             enumerate(Path(vocab_file).read_text(encoding='utf-8').split("\n"))}
-
-    dur_model = DurationPredictor(
-        transformer=DurationTransformer(
-            dim=512,
-            depth=8,
-            heads=8,
-            text_dim=512,
-            ff_mult=2,
-            conv_layers=2,
-            text_num_embeds=len(vocab) - 1,
-        ),
-        vocab_char_map=vocab,
-    ).to(device=ema_model.device)
-
-    # Load weights
-    weights = torch.load(args.dur_ckpt_file, map_location=ema_model.device, weights_only=True)
-    dur_model.load_state_dict(weights["model_state_dict"])
+ema_model = load_model(
+    model_cls, model_arc, ckpt_file, mel_spec_type=vocoder_name, vocab_file=vocab_file, device=device
+)
 
 
 # inference process
@@ -330,8 +304,7 @@ def main():
 
     generated_audio_segments = []
     reg1 = r"(?=\[\w+\])"
-    # chunks = re.split(reg1, gen_text)
-    chunks = gen_text.split("\n")
+    chunks = re.split(reg1, gen_text)
     reg2 = r"\[(\w+)\]"
     for text in chunks:
         if not text.strip():
@@ -350,7 +323,7 @@ def main():
         ref_text_ = voices[voice]["ref_text"]
         gen_text_ = text.strip()
         print(f"Voice: {voice}")
-        audio_segment, final_sample_rate, spectragram = infer_process(
+        audio_segment, final_sample_rate, spectrogram = infer_process(
             ref_audio_,
             ref_text_,
             gen_text_,
@@ -364,8 +337,7 @@ def main():
             sway_sampling_coef=sway_sampling_coef,
             speed=speed,
             fix_duration=fix_duration,
-            no_ref_audio=no_ref_audio,
-            dur_model=dur_model
+            device=device,
         )
         generated_audio_segments.append(audio_segment)
 
@@ -373,8 +345,7 @@ def main():
             if len(gen_text_) > 200:
                 gen_text_ = gen_text_[:200] + " ... "
             sf.write(
-                os.path.join(output_chunk_dir,
-                             sanitize_filename(f"{len(generated_audio_segments):04d}_{gen_text_}") + ".wav"),
+                os.path.join(output_chunk_dir, f"{len(generated_audio_segments) - 1}_{gen_text_}.wav"),
                 audio_segment,
                 final_sample_rate,
             )

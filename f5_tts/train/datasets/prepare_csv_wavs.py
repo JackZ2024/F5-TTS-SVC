@@ -1,11 +1,12 @@
-import os
-import sys
-import signal
-import subprocess  # For invoking ffprobe
-import shutil
 import concurrent.futures
 import multiprocessing
+import os
+import shutil
+import signal
+import subprocess  # For invoking ffprobe
+import sys
 from contextlib import contextmanager
+
 
 sys.path.append(os.getcwd())
 
@@ -16,12 +17,10 @@ from importlib.resources import files
 from pathlib import Path
 
 import torchaudio
-from tqdm import tqdm
 from datasets.arrow_writer import ArrowWriter
+from tqdm import tqdm
 
-from f5_tts.model.utils import (
-    convert_char_to_pinyin,
-)
+from f5_tts.model.utils import convert_char_to_pinyin
 
 
 PRETRAINED_VOCAB_PATH = files("f5_tts").joinpath("../../data/Emilia_ZH_EN_pinyin/vocab.txt")
@@ -122,7 +121,7 @@ def prepare_csv_wavs_dir(input_dir, num_workers=None):
                 for future in tqdm(
                     chunk_futures,
                     total=len(chunk),
-                    desc=f"Processing chunk {i//CHUNK_SIZE + 1}/{(total_files + CHUNK_SIZE - 1)//CHUNK_SIZE}",
+                    desc=f"Processing chunk {i // CHUNK_SIZE + 1}/{(total_files + CHUNK_SIZE - 1) // CHUNK_SIZE}",
                 ):
                     try:
                         result = future.result()
@@ -233,7 +232,7 @@ def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set, is_fine
     dataset_name = out_dir.stem
     print(f"\nFor {dataset_name}, sample count: {len(result)}")
     print(f"For {dataset_name}, vocab size is: {len(text_vocab_set)}")
-    print(f"For {dataset_name}, total {sum(duration_list)/3600:.2f} hours")
+    print(f"For {dataset_name}, total {sum(duration_list) / 3600:.2f} hours")
 
 
 def prepare_and_save_set(inp_dir, out_dir, is_finetune: bool = True, num_workers: int = None):

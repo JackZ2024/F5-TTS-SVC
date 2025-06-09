@@ -1,13 +1,14 @@
 # ruff: noqa: E402
 # Above allows ruff to ignore E402: module level import not at top of file
 
-import json
 import re
 import tempfile
 
 import os
 import shutil
 import sys
+import time
+import threading
 
 import click
 import gradio as gr
@@ -57,6 +58,7 @@ rvc_config = Config()
 rvc_vc = VC(rvc_config)
 
 cur_rvc_model_path = ""
+custom_ema_model, pre_custom_path = None, ""
 
 # load models
 
@@ -128,8 +130,17 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             return None
 
     if model_cfg is None:
-        model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-    return load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
+        if "v1" in os.path.basename(ckpt_path).lower():
+            model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
+        else:
+            model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding = False, conv_layers=4, pe_attn_head = 1)
+
+    global pre_custom_path, custom_ema_model
+    if pre_custom_path != ckpt_path or custom_ema_model is None:
+        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
+        pre_custom_path = ckpt_path
+
+    return custom_ema_model
 
 def load_F5_models_from_csv():
     csv_path = "./F5-models.csv"
@@ -521,12 +532,6 @@ def get_final_wave(cross_fade_duration, generated_waves, final_sample_rate):
 
     return final_wave
 
-F5TTS_ema_model = None
-E2TTS_ema_model = None
-custom_ema_model, pre_custom_path = None, ""
-
-chat_model_state = None
-chat_tokenizer_state = None
 
 F5_models_dict = load_F5_models_list()
 sovits_models_dict = load_sovits_models_list()
@@ -796,6 +801,7 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
+    start_cleanup_thread("./temp", days=2)
 
     if (args.ppg == None):
         args.ppg = os.path.join(temp_dir, "svc_tmp.ppg.npy")
@@ -1016,6 +1022,35 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
 
     return svc_files
 
+last_cleanup_times = {}
+cleanup_lock = threading.Lock()
+def delete_old_files_and_dirs(path, days=2):
+    global last_cleanup_times
+    now = time.time()
+    with cleanup_lock:
+        last_time = last_cleanup_times.get(path, 0)
+        if (now - last_time) < 86400:
+            return
+
+        last_cleanup_times[path] = now
+
+    cutoff = now - (days * 86400)
+    for item in os.listdir(path):
+        full_path = os.path.join(path, item)
+        try:
+            mtime = os.path.getmtime(full_path)
+            if mtime < cutoff:
+                if os.path.isfile(full_path) or os.path.islink(full_path):
+                    os.remove(full_path)
+                elif os.path.isdir(full_path):
+                    shutil.rmtree(full_path)
+        except Exception as e:
+            print(f"[{path}] 处理时出错: {full_path}, 错误: {e}")
+
+def start_cleanup_thread(path, days=2):
+    t = threading.Thread(target=delete_old_files_and_dirs, args=(path, days), daemon=True)
+    t.start()
+
 def infer(
     ref_audio_orig,
     ref_text,
@@ -1025,6 +1060,7 @@ def infer(
     model_name,
     password,
     remove_silence,
+    seed,
     cross_fade_duration=0.15,
     nfe_step=32,
     speed=1,
@@ -1039,6 +1075,13 @@ def infer(
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
         return gr.update(), []
+    
+    # Set inference seed
+    if seed < 0 or seed > 2**31 - 1:
+        gr.Warning("Seed must in range 0 ~ 2147483647. Using random seed instead.")
+        seed = np.random.randint(0, 2**31 - 1)
+    torch.manual_seed(seed)
+    used_seed = seed
 
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
 
@@ -1050,8 +1093,7 @@ def infer(
         lang_alone = language[:index]
 
     show_info("加载模型……")
-    custom_ema_model = load_custom(model_name, language, password)
-    ema_model = custom_ema_model
+    ema_model = load_custom(model_name, language, password)
     if ema_model is None:
         gr.Warning("模型加载失败")
         return gr.update(), []
@@ -1093,12 +1135,15 @@ def infer(
     if launch_in_service:
         os.makedirs("./gen_audio", exist_ok=True)
         gen_audio_path = tempfile.mkdtemp(dir="./gen_audio")
+        start_cleanup_thread("./gen_audio", days=2)
 
         os.makedirs("./last_audio", exist_ok=True)
         last_audio_path = tempfile.mkdtemp(dir="./last_audio")
+        start_cleanup_thread("./last_audio", days=2)
 
         os.makedirs("./tmp", exist_ok=True)
         tmp_audio_path = tempfile.mkdtemp(dir="./tmp")
+        start_cleanup_thread("./tmp", days=2)
     else:
         gen_audio_path = "./gen_audio"
         if not os.path.exists(gen_audio_path):
@@ -1163,7 +1208,7 @@ def infer(
             speed=speed,
             show_info=show_info,
             # progress=gr.Progress(),
-            lang=lang,
+            # lang=lang,
         )
 
         generated_waves.append(final_wave)
@@ -1246,7 +1291,7 @@ def infer(
         final_waves = final_waves.squeeze().cpu().numpy()
 
     output_audio_list.extend(segm_audio_list)
-    return (final_sample_rate, final_waves), output_audio_list
+    return (final_sample_rate, final_waves), output_audio_list, used_seed
 
 
 def create_textboxes(num):
@@ -1527,9 +1572,16 @@ F5-TTS + SOVITS + Applio + RVC
                     value=def_txt,
                 )
                 with gr.Row():
+                    randomize_seed = gr.Checkbox(
+                        label="Randomize Seed",
+                        info="勾选此项，每次会自动生成随机值",
+                        value=True,
+                        scale=1,
+                    )
+                    seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
                     remove_silence = gr.Checkbox(
                             label="删除静音",
-                        info="The model tends to produce silences, especially on longer audio. We can manually remove silences if needed. Note that this is an experimental feature and may produce strange results. This will also increase generation time.",
+                        info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
                         value=False,
                     )
                     save_line_audio = gr.Checkbox(
@@ -1543,7 +1595,7 @@ F5-TTS + SOVITS + Applio + RVC
                     maximum=2.0,
                     value=0.8,
                     step=0.1,
-                    info="Adjust the speed of the audio.",
+                    info="调整音频语速",
                 )
                 nfe_slider = gr.Slider(
                     label="NFE Steps",
@@ -1559,7 +1611,7 @@ F5-TTS + SOVITS + Applio + RVC
                     maximum=1.0,
                     value=0.15,
                     step=0.01,
-                    info="Set the duration of the cross-fade between audio clips.",
+                    info="设置两个片段之前的静音时长",
                 )
 
             audio_output = gr.Audio(label="合成音频")
@@ -1591,6 +1643,8 @@ F5-TTS + SOVITS + Applio + RVC
                 model_name,
                 password,
                 remove_silence,
+                randomize_seed,
+                seed_input,
                 save_line_audio,
                 cross_fade_duration_slider,
                 nfe_slider,
@@ -1603,7 +1657,10 @@ F5-TTS + SOVITS + Applio + RVC
                 num_input,
                 *gen_texts_input,
             ):
-                audio_out, gen_audio_list = infer(
+                if randomize_seed:
+                    seed_input = np.random.randint(0, 2**31 - 1)
+
+                audio_out, gen_audio_list, used_seed = infer(
                     ref_audio_input,
                     ref_text_input,
                     num_input,
@@ -1612,6 +1669,7 @@ F5-TTS + SOVITS + Applio + RVC
                     model_name,
                     password,
                     remove_silence,
+                    seed=seed_input,
                     cross_fade_duration=cross_fade_duration_slider,
                     nfe_step=nfe_slider,
                     speed=speed_slider,
@@ -1622,7 +1680,7 @@ F5-TTS + SOVITS + Applio + RVC
                     tone_shift = tone_shift,
                     rvc_index_rate = rvc_index_rate,
                 )
-                return audio_out, gen_audio_list
+                return audio_out, gen_audio_list, used_seed
 
             intputs = [ref_audio, 
                     basic_ref_text_input, 
@@ -1630,6 +1688,8 @@ F5-TTS + SOVITS + Applio + RVC
                     custom_ckpt_path, 
                     password_input, 
                     remove_silence, 
+                    randomize_seed,
+                    seed_input,
                     save_line_audio, 
                     cross_fade_duration_slider, 
                     nfe_slider, 
@@ -1645,7 +1705,7 @@ F5-TTS + SOVITS + Applio + RVC
             generate_btn.click(
                 basic_tts,
                 inputs=intputs,
-                outputs=[audio_output, download_output],
+                outputs=[audio_output, download_output, seed_input],
             )
 
             clear_box_btn.click(

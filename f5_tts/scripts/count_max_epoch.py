@@ -9,7 +9,7 @@ mel_hop_length = 256
 mel_sampling_rate = 24000
 
 # target
-wanted_max_updates = 1000000
+wanted_max_updates = 1200000
 
 # train params
 gpus = 8
@@ -24,7 +24,7 @@ updates_per_epoch = total_hours / mini_batch_hours
 
 # result
 epochs = wanted_max_updates / updates_per_epoch
-print(f"epochs should be set to: {epochs:.0f} ({epochs/grad_accum:.1f} x gd_acum {grad_accum})")
+print(f"epochs should be set to: {epochs:.0f} ({epochs / grad_accum:.1f} x gd_acum {grad_accum})")
 print(f"progress_bar should show approx. 0/{updates_per_epoch:.0f} updates")
 # print(f"                      or approx. 0/{steps_per_epoch:.0f} steps")
 

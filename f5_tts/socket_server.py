@@ -1,7 +1,6 @@
 import argparse
 import gc
 import logging
-import numpy as np
 import queue
 import socket
 import struct
@@ -10,18 +9,21 @@ import traceback
 import wave
 from importlib.resources import files
 
+import numpy as np
 import torch
 import torchaudio
 from huggingface_hub import hf_hub_download
+from hydra.utils import get_class
+from omegaconf import OmegaConf
 
-from f5_tts.model.backbones.dit import DiT
 from f5_tts.infer.utils_infer import (
     chunk_text,
-    preprocess_ref_audio_text,
-    load_vocoder,
-    load_model,
     infer_batch_process,
+    load_model,
+    load_vocoder,
+    preprocess_ref_audio_text,
 )
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -68,7 +70,7 @@ class AudioFileWriterThread(threading.Thread):
 
 
 class TTSStreamingProcessor:
-    def __init__(self, ckpt_file, vocab_file, ref_audio, ref_text, device=None, dtype=torch.float32):
+    def __init__(self, model, ckpt_file, vocab_file, ref_audio, ref_text, device=None, dtype=torch.float32):
         self.device = device or (
             "cuda"
             if torch.cuda.is_available()
@@ -78,21 +80,24 @@ class TTSStreamingProcessor:
             if torch.backends.mps.is_available()
             else "cpu"
         )
-        self.mel_spec_type = "vocos"
+        model_cfg = OmegaConf.load(str(files("f5_tts").joinpath(f"configs/{model}.yaml")))
+        self.model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
+        self.model_arc = model_cfg.model.arch
+        self.mel_spec_type = model_cfg.model.mel_spec.mel_spec_type
+        self.sampling_rate = model_cfg.model.mel_spec.target_sample_rate
+
         self.model = self.load_ema_model(ckpt_file, vocab_file, dtype)
         self.vocoder = self.load_vocoder_model()
-        self.sampling_rate = 24000
+
         self.update_reference(ref_audio, ref_text)
         self._warm_up()
         self.file_writer_thread = None
         self.first_package = True
 
     def load_ema_model(self, ckpt_file, vocab_file, dtype):
-        model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-        model_cls = DiT
         return load_model(
-            model_cls=model_cls,
-            model_cfg=model_cfg,
+            self.model_cls,
+            self.model_arc,
             ckpt_path=ckpt_file,
             mel_spec_type=self.mel_spec_type,
             vocab_file=vocab_file,
@@ -213,8 +218,13 @@ if __name__ == "__main__":
     parser.add_argument("--port", default=9998)
 
     parser.add_argument(
+        "--model",
+        default="F5TTS_v1_Base",
+        help="The model name, e.g. F5TTS_v1_Base",
+    )
+    parser.add_argument(
         "--ckpt_file",
-        default=str(hf_hub_download(repo_id="SWivid/F5-TTS", filename="F5TTS_Base/model_1200000.safetensors")),
+        default=str(hf_hub_download(repo_id="SWivid/F5-TTS", filename="F5TTS_v1_Base/model_1250000.safetensors")),
         help="Path to the model checkpoint file",
     )
     parser.add_argument(
@@ -242,6 +252,7 @@ if __name__ == "__main__":
     try:
         # Initialize the processor with the model and vocoder
         processor = TTSStreamingProcessor(
+            model=args.model,
             ckpt_file=args.ckpt_file,
             vocab_file=args.vocab_file,
             ref_audio=args.ref_audio,
