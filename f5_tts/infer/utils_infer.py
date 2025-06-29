@@ -405,7 +405,7 @@ def infer_process(
         print(f"gen_text {i}", gen_text)
     print("\n")
 
-    show_info(f"Generating audio in {len(gen_text_batches)} batches...")
+    # show_info(f"Generating audio in {len(gen_text_batches)} batches...")
     return next(
         infer_batch_process(
             (audio, sr),

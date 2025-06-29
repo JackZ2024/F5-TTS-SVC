@@ -9,6 +9,7 @@ import shutil
 import sys
 import time
 import threading
+import string
 
 import click
 import gradio as gr
@@ -1051,6 +1052,36 @@ def start_cleanup_thread(path, days=2):
     t = threading.Thread(target=delete_old_files_and_dirs, args=(path, days), daemon=True)
     t.start()
 
+PUNCT = set(string.punctuation + '，。！？；：（）【】《》、')
+
+def insert_punct(text):
+    result = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        if i + 1 < n and text[i] == ' ' and text[i+1] == ' ':
+            # 连续两个空格
+            prev = result[-1] if result else ''
+            if prev not in PUNCT:
+                result.append('.')  # 插入句号
+                result.append(' ')  # 插入空格
+            # 跳过两个空格
+            i += 2
+        elif text[i] == ' ':
+            # 单个空格
+            prev = result[-1] if result else ''
+            if prev not in PUNCT:
+                result.append(',')  # 插入逗号
+                result.append(' ')  # 插入空格
+            # 跳过空格
+            i += 1
+        else:
+            result.append(text[i])
+            i += 1
+
+    return ''.join(result)
+
 def infer(
     ref_audio_orig,
     ref_text,
@@ -1066,6 +1097,7 @@ def infer(
     speed=1,
     show_info=gr.Info,
     save_line_audio = False,
+    insert_punct_in_space = False,
     enable_svc = True,
     svc_type = "",
     svc_model = "",
@@ -1121,6 +1153,9 @@ def infer(
         for gen_text in gen_text_list:
             if gen_text.strip() == "":
                 continue
+            if (lang_alone == "泰语" and insert_punct_in_space) or "泰语-sit-男-4" in model_name:
+                gen_text = insert_punct(gen_text)
+
             all_gen_text_list.append(gen_text)
             index += 1
 
@@ -1573,7 +1608,7 @@ F5-TTS + SOVITS + Applio + RVC
                 )
                 with gr.Row():
                     randomize_seed = gr.Checkbox(
-                        label="Randomize Seed",
+                        label="随机种子",
                         info="勾选此项，每次会自动生成随机值",
                         value=True,
                         scale=1,
@@ -1587,6 +1622,11 @@ F5-TTS + SOVITS + Applio + RVC
                     save_line_audio = gr.Checkbox(
                         label="按行保存音频",
                         info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
+                        value=False,
+                    )
+                    insert_punct_in_space = gr.Checkbox(
+                        label="插入标点",
+                        info="此功能针对泰语，在空格处插入逗号",
                         value=False,
                     )
                 speed_slider = gr.Slider(
@@ -1646,6 +1686,7 @@ F5-TTS + SOVITS + Applio + RVC
                 randomize_seed,
                 seed_input,
                 save_line_audio,
+                insert_punct_in_space,
                 cross_fade_duration_slider,
                 nfe_slider,
                 speed_slider,
@@ -1674,6 +1715,7 @@ F5-TTS + SOVITS + Applio + RVC
                     nfe_step=nfe_slider,
                     speed=speed_slider,
                     save_line_audio=save_line_audio,
+                    insert_punct_in_space=insert_punct_in_space,
                     enable_svc = enable_svc,
                     svc_type = svc_type,
                     svc_model = svc_model,
@@ -1691,6 +1733,7 @@ F5-TTS + SOVITS + Applio + RVC
                     randomize_seed,
                     seed_input,
                     save_line_audio, 
+                    insert_punct_in_space,
                     cross_fade_duration_slider, 
                     nfe_slider, 
                     speed_slider, 
