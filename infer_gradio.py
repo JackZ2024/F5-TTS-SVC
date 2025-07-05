@@ -1746,15 +1746,18 @@ F5-TTS + SOVITS + Applio + RVC
                 if randomize_seed:
                     seed_input = np.random.randint(0, 2 ** 31 - 1)
 
-                gen_texts_input_modify = []
-                for text in gen_texts_input:
-                    for modify in modify_words.split("\n"):
-                        parts = modify.split("\t")
-                        if len(parts) != 2:
-                            continue
-                        else:
-                            text = text.replace(parts[0], parts[1])
-                            gen_texts_input_modify.append(text)
+                if len(modify_words) > 0:
+                    gen_texts_input_modify = []
+                    for text in gen_texts_input:
+                        for modify in modify_words.split("\n"):
+                            parts = modify.split("\t")
+                            if len(parts) != 2:
+                                continue
+                            else:
+                                text = text.replace(parts[0], parts[1])
+                                gen_texts_input_modify.append(text)
+                else:
+                    gen_texts_input_modify = gen_texts_input
 
                 audio_out, gen_audio_list, used_seed = infer(
                     ref_audio_input,
