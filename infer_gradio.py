@@ -65,6 +65,7 @@ custom_ema_model, pre_custom_path = None, ""
 
 vocoder = load_vocoder()
 
+
 def get_drive_id(url):
     """ 通过网盘文件url获取id """
     pattern = r"(?:https?://)?(?:www\.)?drive\.google\.com/(?:file/d/|folder/d/|open\?id=|uc\?id=|drive/folders/)([a-zA-Z0-9_-]+)"
@@ -74,8 +75,8 @@ def get_drive_id(url):
     else:
         return url
 
-def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_info=gr.Info):
 
+def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_info=gr.Info):
     global F5_models_dict
     model_dict_list = F5_models_dict.get(lang, [])
     model_dict = None
@@ -134,7 +135,8 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
         if "v1" in os.path.basename(ckpt_path).lower():
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
         else:
-            model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding = False, conv_layers=4, pe_attn_head = 1)
+            model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding=False,
+                             conv_layers=4, pe_attn_head=1)
 
     global pre_custom_path, custom_ema_model
     if pre_custom_path != ckpt_path or custom_ema_model is None:
@@ -142,6 +144,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
         pre_custom_path = ckpt_path
 
     return custom_ema_model
+
 
 def load_F5_models_from_csv():
     csv_path = "./F5-models.csv"
@@ -172,7 +175,7 @@ def load_F5_models_from_csv():
             model_dict["model_name"] = model_name
             model_dict["model"] = model_path
             model_dict["vocab"] = vocab_path
-            model_dict["model_url"] = model_url 
+            model_dict["model_url"] = model_url
             model_dict["lang"] = model_lang
             if model_lang in models_dict:
                 models_dict[model_lang].append(model_dict)
@@ -180,6 +183,7 @@ def load_F5_models_from_csv():
                 models_dict[model_lang] = [model_dict]
 
     return models_dict
+
 
 def load_F5_models_list():
     models_root_path = "./F5-models"
@@ -191,7 +195,7 @@ def load_F5_models_list():
         models = load_F5_models_from_csv()
         models_dict.update(models)
         return models_dict
-    
+
     if not os.path.exists(models_root_path):
         return models_dict
 
@@ -215,7 +219,7 @@ def load_F5_models_list():
                         model_dict["model_name"] = model_name
                         model_dict["model"] = model_path
                         model_dict["vocab"] = vocab_file
-                        model_dict["model_url"] = "" 
+                        model_dict["model_url"] = ""
                         model_dict["lang"] = language
                         if language in models_dict:
                             models_dict[language].append(model_dict)
@@ -225,6 +229,7 @@ def load_F5_models_list():
                         break
 
     return models_dict
+
 
 def load_sovits_models_from_csv():
     csv_path = "./sovits-models.csv"
@@ -266,6 +271,7 @@ def load_sovits_models_from_csv():
 
     return models_dict
 
+
 def load_sovits_models_list():
     models_root_path = "./sovits-models"
     models_dict = {}
@@ -277,7 +283,7 @@ def load_sovits_models_list():
         models = load_sovits_models_from_csv()
         models_dict.update(models)
         return models_dict
-    
+
     if not os.path.exists(models_root_path):
         return models_dict
     for folder in os.listdir(models_root_path):
@@ -307,6 +313,7 @@ def load_sovits_models_list():
                         models_dict[language] = [model_dict]
 
     return models_dict
+
 
 def load_applio_models_from_csv():
     csv_path = "./applio-models.csv"
@@ -346,6 +353,7 @@ def load_applio_models_from_csv():
 
     return models_dict
 
+
 def load_applio_models_list():
     models_root_path = "./applio-models"
     models_dict = {}
@@ -357,7 +365,7 @@ def load_applio_models_list():
         models = load_applio_models_from_csv()
         models_dict.update(models)
         return models_dict
-    
+
     if not os.path.exists(models_root_path):
         return models_dict
     for language in os.listdir(models_root_path):
@@ -386,6 +394,7 @@ def load_applio_models_list():
                         models_dict[language] = [model_dict]
 
     return models_dict
+
 
 def load_rvc_models_from_csv():
     csv_path = "./rvc-models.csv"
@@ -425,6 +434,7 @@ def load_rvc_models_from_csv():
 
     return models_dict
 
+
 def load_rvc_models_list():
     models_root_path = "./rvc-models"
     models_dict = {}
@@ -436,7 +446,7 @@ def load_rvc_models_list():
         models = load_rvc_models_from_csv()
         models_dict.update(models)
         return models_dict
-    
+
     if not os.path.exists(models_root_path):
         return models_dict
     for language in os.listdir(models_root_path):
@@ -466,6 +476,7 @@ def load_rvc_models_list():
 
     return models_dict
 
+
 def load_refs_list():
     refs_root_path = "./refs"
     refs_dict = {}
@@ -490,6 +501,7 @@ def load_refs_list():
             refs_dict[language] = ref_audio_dict
 
     return refs_dict
+
 
 # 组合生成的音频，并在中间根据参数添加静音
 def get_final_wave(cross_fade_duration, generated_waves, final_sample_rate):
@@ -551,12 +563,12 @@ def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
         svc_models_list = sovits_models_dict[lang_alone]
         for speaker in svc_models_list:
             if speaker["model_name"] == svc_model:
-                    model_path = speaker["model_path"]
-                    speaker_path = speaker["speaker_path"]
-                    model_url = speaker["model_url"]
-                    cur_speaker = speaker
-                    break
-            
+                model_path = speaker["model_path"]
+                speaker_path = speaker["speaker_path"]
+                model_url = speaker["model_url"]
+                cur_speaker = speaker
+                break
+
     if model_path == "" or (not os.path.exists(model_path)):
         if model_url != "":
             show_info("下载sovits模型中……")
@@ -600,6 +612,7 @@ def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
         cur_speaker["speaker_path"] = speaker_path
         return True, model_path, speaker_path
 
+
 def get_applio_model(svc_model, lang_alone, password, show_info=gr.Info):
     global applio_models_dict
     cur_speaker = None
@@ -610,12 +623,12 @@ def get_applio_model(svc_model, lang_alone, password, show_info=gr.Info):
         svc_models_list = applio_models_dict[lang_alone]
         for speaker in svc_models_list:
             if speaker["model_name"] == svc_model:
-                    model_path = speaker["model_path"]
-                    index_path = speaker["index_path"]
-                    model_url = speaker["model_url"]
-                    cur_speaker = speaker
-                    break
-            
+                model_path = speaker["model_path"]
+                index_path = speaker["index_path"]
+                model_url = speaker["model_url"]
+                cur_speaker = speaker
+                break
+
     if model_path == "" or (not os.path.exists(model_path)):
         if model_url != "":
             show_info("下载Applio模型中……")
@@ -658,7 +671,8 @@ def get_applio_model(svc_model, lang_alone, password, show_info=gr.Info):
         cur_speaker["model_path"] = model_path
         cur_speaker["index_path"] = index_path
         return True, model_path, index_path
-    
+
+
 def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
     global rvc_models_dict
     cur_speaker = None
@@ -669,12 +683,12 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
         svc_models_list = rvc_models_dict[lang_alone]
         for speaker in svc_models_list:
             if speaker["model_name"] == svc_model:
-                    model_path = speaker["model_path"]
-                    index_path = speaker["index_path"]
-                    model_url = speaker["model_url"]
-                    cur_speaker = speaker
-                    break
-            
+                model_path = speaker["model_path"]
+                index_path = speaker["index_path"]
+                model_url = speaker["model_url"]
+                cur_speaker = speaker
+                break
+
     if model_path == "" or (not os.path.exists(model_path)):
         if model_url != "":
             show_info("下载RVC模型中……")
@@ -718,8 +732,8 @@ def get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info):
         cur_speaker["index_path"] = index_path
         return True, model_path, index_path
 
-def get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info=gr.Info):
 
+def get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info=gr.Info):
     if enable_svc:
         if svc_type is None or svc_model is None:
             return False, "", ""
@@ -733,6 +747,7 @@ def get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_in
                 # RVC
                 return get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info)
 
+
 class sovits_parms():
     def __init__(self):
         self.config = ""
@@ -743,7 +758,7 @@ class sovits_parms():
         self.vec = None
         self.pit = None
         self.shift = 0
-        self.pit_type = 'rmvpe' # (sing or voice)
+        self.pit_type = 'rmvpe'  # (sing or voice)
         self.enable_retrieval = False
         self.retrieval_index_prefix = ""
         self.retrieval_ratio = 0.5
@@ -753,46 +768,49 @@ class sovits_parms():
         self.debug = False
         self.voice = ""
 
+
 def download_sovits_models():
     snapshot_download(
         repo_id="Jack202410/sovits-pretrain",
         local_dir='./',
         local_dir_use_symlinks=False,  # Don't use symlinks
-        local_files_only=False,        # Allow downloading new files
-        ignore_patterns=["*.git*"],    # Ignore git-related files
-        resume_download=True           # Resume interrupted downloads
+        local_files_only=False,  # Allow downloading new files
+        ignore_patterns=["*.git*"],  # Ignore git-related files
+        resume_download=True  # Resume interrupted downloads
     )
+
 
 def download_applio_models():
     snapshot_download(
         repo_id="Jack202410/applio-pretrain",
         local_dir='./rvc/models',
         local_dir_use_symlinks=False,  # Don't use symlinks
-        local_files_only=False,        # Allow downloading new files
-        ignore_patterns=["*.git*"],    # Ignore git-related files
-        resume_download=True           # Resume interrupted downloads
+        local_files_only=False,  # Allow downloading new files
+        ignore_patterns=["*.git*"],  # Ignore git-related files
+        resume_download=True  # Resume interrupted downloads
     )
+
 
 def download_rvc_models():
     snapshot_download(
         repo_id="Jack202410/rvc_pretrain2",
         local_dir='./infer/assets',
         local_dir_use_symlinks=False,  # Don't use symlinks
-        local_files_only=False,        # Allow downloading new files
-        ignore_patterns=["*.git*"],    # Ignore git-related files
-        resume_download=True           # Resume interrupted downloads
+        local_files_only=False,  # Allow downloading new files
+        ignore_patterns=["*.git*"],  # Ignore git-related files
+        resume_download=True  # Resume interrupted downloads
     )
 
-def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
 
+def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
     args = sovits_parms()
     args.model = model_path
-    args.spk =  speaker_path
-    args.config =  "./sovits_svc/configs/base.yaml"
+    args.spk = speaker_path
+    args.config = "./sovits_svc/configs/base.yaml"
     args.voice = svc_model
     args.wave = audio_filepath
     args.shift = pitch
-    
+
     # 检查预训练模型是否存在，不存在就到网上下载
     whisper_pretrain = "./whisper_pretrain/large-v2.pt"
     if not os.path.exists(whisper_pretrain):
@@ -873,8 +891,8 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
     # write(out_file, hp.data.sampling_rate, out_audio)
     return (hp.data.sampling_rate, out_audio)
 
-def applio_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pitch=0, split_audio=True):
 
+def applio_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pitch=0, split_audio=True):
     # 根据需要下载预训练模型
     rmvpe_pretrain = "./rvc/models/predictors/rmvpe.pt"
     if not os.path.exists(rmvpe_pretrain):
@@ -944,10 +962,10 @@ def applio_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate,
         "sid": 0,
     }
     infer_pipeline = VoiceConverter()
-    return infer_pipeline.convert_audio( **kwargs,)
+    return infer_pipeline.convert_audio(**kwargs, )
+
 
 def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pitch=0, split_audio=True):
-
     # 根据需要下载预训练模型
     rmvpe_pretrain = "./infer/assets/rmvpe/rmvpe.pt"
     if not os.path.exists(rmvpe_pretrain):
@@ -959,17 +977,18 @@ def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pi
         rvc_vc.get_vc(model_path, 0.33)
         cur_rvc_model_path = model_path
 
-    return rvc_vc.vc_single(0, audio_filepath, pitch, "", "rmvpe", index_path, "", rvc_index_rate, 3, 0, 0.25, 0.33, split_audio)
+    return rvc_vc.vc_single(0, audio_filepath, pitch, "", "rmvpe", index_path, "", rvc_index_rate, 3, 0, 0.25, 0.33,
+                            split_audio)
+
 
 def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_rate, password, show_info=gr.Info):
-
     if len(audios) == 0:
         gr.Warning("请添加转换音频")
         return []
     if svc_model == "":
         gr.Warning("请选择转换模型")
         return []
-    
+
     lang = language
     lang_alone = ""
     if "-" in language:
@@ -981,7 +1000,7 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
     if model_path is None or model_path == "":
         gr.Warning("选择的音色模型不存在")
         return []
-    
+
     # 删除旧的音频文件
     global launch_in_service
     if launch_in_service:
@@ -998,9 +1017,9 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
                     os.remove(convert_audio_path + "/" + file)
                 except:
                     pass
-    
+
     svc_files = []
-    progress=gr.Progress()
+    progress = gr.Progress()
     for i, audio_filepath in enumerate(progress.tqdm(audios, desc="Processing")):
         file_name = pathlib.Path(audio_filepath).stem
         if svc_type == "Sovits":
@@ -1009,13 +1028,15 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
             sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
             svc_files.append(converted_filepath)
         elif svc_type == "Applio":
-            sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift)
+            sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
+                                                             tone_shift)
             if audio_wave is not None:
                 converted_filepath = convert_audio_path + f"/{file_name}_applio_{tone_shift}_{rvc_index_rate}.wav"
                 sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
                 svc_files.append(converted_filepath)
         elif svc_type == "RVC":
-            sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift, True)
+            sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
+                                                          tone_shift, True)
             if audio_wave is not None:
                 converted_filepath = convert_audio_path + f"/{file_name}_rvc_{tone_shift}_{rvc_index_rate}.wav"
                 sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
@@ -1023,8 +1044,11 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
 
     return svc_files
 
+
 last_cleanup_times = {}
 cleanup_lock = threading.Lock()
+
+
 def delete_old_files_and_dirs(path, days=2):
     global last_cleanup_times
     now = time.time()
@@ -1048,11 +1072,14 @@ def delete_old_files_and_dirs(path, days=2):
         except Exception as e:
             print(f"[{path}] 处理时出错: {full_path}, 错误: {e}")
 
+
 def start_cleanup_thread(path, days=2):
     t = threading.Thread(target=delete_old_files_and_dirs, args=(path, days), daemon=True)
     t.start()
 
+
 PUNCT = set(string.punctuation + '，。！？；：（）【】《》、')
+
 
 def insert_punct(text):
     result = []
@@ -1060,7 +1087,7 @@ def insert_punct(text):
     n = len(text)
 
     while i < n:
-        if i + 1 < n and text[i] == ' ' and text[i+1] == ' ':
+        if i + 1 < n and text[i] == ' ' and text[i + 1] == ' ':
             # 连续两个空格
             prev = result[-1] if result else ''
             if prev not in PUNCT:
@@ -1082,36 +1109,37 @@ def insert_punct(text):
 
     return ''.join(result)
 
+
 def infer(
-    ref_audio_orig,
-    ref_text,
-    num_input,
-    gen_texts,
-    language,
-    model_name,
-    password,
-    remove_silence,
-    seed,
-    cross_fade_duration=0.15,
-    nfe_step=32,
-    speed=1,
-    show_info=gr.Info,
-    save_line_audio = False,
-    insert_punct_in_space = False,
-    enable_svc = True,
-    svc_type = "",
-    svc_model = "",
-    tone_shift=0,
-    rvc_index_rate = 0.75,
+        ref_audio_orig,
+        ref_text,
+        num_input,
+        gen_texts,
+        language,
+        model_name,
+        password,
+        remove_silence,
+        seed,
+        cross_fade_duration=0.15,
+        nfe_step=32,
+        speed=1,
+        show_info=gr.Info,
+        save_line_audio=False,
+        insert_punct_in_space=False,
+        enable_svc=True,
+        svc_type="",
+        svc_model="",
+        tone_shift=0,
+        rvc_index_rate=0.75,
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
         return gr.update(), []
-    
+
     # Set inference seed
-    if seed < 0 or seed > 2**31 - 1:
+    if seed < 0 or seed > 2 ** 31 - 1:
         gr.Warning("Seed must in range 0 ~ 2147483647. Using random seed instead.")
-        seed = np.random.randint(0, 2**31 - 1)
+        seed = np.random.randint(0, 2 ** 31 - 1)
     torch.manual_seed(seed)
     used_seed = seed
 
@@ -1129,7 +1157,7 @@ def infer(
     if ema_model is None:
         gr.Warning("模型加载失败")
         return gr.update(), []
-    
+
     # 检查用户设置的输入框数量是否正常
     try:
         num_input = int(num_input)
@@ -1139,7 +1167,7 @@ def infer(
     except ValueError:
         gr.Warning("输入框数量无法转换为数字")
         return gr.update(), []
-    
+
     # 把所有的输入框的文本都获取出来，汇总到一块，生成时也用总的这个列表，这样方便显示总进度
     # 如果要根据框保存中间结果，那就在生成的过程中判断是第几个框，所以保存每个框里的文本行的数量。
     all_gen_text_list = []
@@ -1164,7 +1192,7 @@ def infer(
     if len(text_box_text_list) == 0:
         gr.Warning("没有要生成的文本")
         return gr.update(), []
-    
+
     # 删除旧的音频文件
     global launch_in_service
     if launch_in_service:
@@ -1212,11 +1240,12 @@ def infer(
                         os.remove(tmp_audio_path + "/" + file)
                 except:
                     pass
-    
+
     # 如果开启了转换功能，那就判断转换模型是否支持改语种，如果不支持就把转换功能关闭
     # 如果支持，就判断模型是否存在，如果不存在，就到网盘下载
     if enable_svc:
-        enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_info)
+        enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password,
+                                                             show_info)
         if model_path is None:
             return gr.update(), []
 
@@ -1224,7 +1253,7 @@ def infer(
     generated_waves = []
     svc_waves = []
     spectrograms = []
-    progress=gr.Progress()
+    progress = gr.Progress()
     start_pos = 0
     cur_box_index = 1
     total_box_count = text_box_text_list[0]
@@ -1267,12 +1296,14 @@ def infer(
                 svc_waves.append(audio_wave)
                 svc_sampling_rate = sampling_rate
             elif svc_type == "Applio":
-                sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift, False)
+                sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path,
+                                                                 rvc_index_rate, tone_shift, False)
                 if audio_wave is not None:
                     svc_waves.append(audio_wave)
                     svc_sampling_rate = sampling_rate
             elif svc_type == "RVC":
-                sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate, tone_shift, False)
+                sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
+                                                              tone_shift, False)
                 if audio_wave is not None:
                     svc_waves.append(audio_wave)
                     svc_sampling_rate = sampling_rate
@@ -1334,15 +1365,17 @@ def create_textboxes(num):
         num = int(num)
         if num <= 0:
             return [gr.update(visible=False) for _ in range(20)]
-        
+
         # 控制输入框的可见性，最多支持 20 个
         updates = [gr.update(visible=True) if i < num else gr.update(visible=False) for i in range(20)]
         return updates
     except ValueError:
         return [gr.update(visible=False) for _ in range(20)]
-    
+
+
 def clear_txt_boxs():
     return [gr.update(value="") for _ in range(20)]
+
 
 def load_ref_txt(ref_txt_path):
     txt = ""
@@ -1350,6 +1383,7 @@ def load_ref_txt(ref_txt_path):
         with open(ref_txt_path, "r", encoding="utf8") as f:
             txt = f.read()
     return txt
+
 
 with gr.Blocks(title="F5-TTS-SVC_v3") as app:
     gr.Markdown(
@@ -1361,6 +1395,7 @@ F5-TTS + SOVITS + Applio + RVC
 """
     )
 
+
     def get_default_params(lang):
         global F5_models_dict
         global refs_dict
@@ -1371,7 +1406,7 @@ F5-TTS + SOVITS + Applio + RVC
         def_model = ""
         if len(model_names) > 0:
             def_model = model_names[0]
-            
+
         lang_alone = lang
         if "-" in lang_alone:
             index = lang.find("-")
@@ -1397,7 +1432,7 @@ F5-TTS + SOVITS + Applio + RVC
         speaker_model = None
         svc_type_list = []
         def_svc_type = None
-        
+
         global applio_models_dict
         global rvc_models_dict
         global sovits_models_dict
@@ -1420,11 +1455,11 @@ F5-TTS + SOVITS + Applio + RVC
             svc_models_list = applio_models_dict[lang_alone]
             for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
-        elif def_svc_type == "Sovits": 
+        elif def_svc_type == "Sovits":
             svc_models_list = sovits_models_dict[lang_alone]
             for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
-        elif def_svc_type == "RVC": 
+        elif def_svc_type == "RVC":
             svc_models_list = rvc_models_dict[lang_alone]
             for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
@@ -1432,17 +1467,22 @@ F5-TTS + SOVITS + Applio + RVC
         if len(speaker_models) > 0:
             speaker_model = speaker_models[0]
 
-        return (model_names, def_model), def_txt, (ref_audios, def_audio), (svc_type_list, def_svc_type), (speaker_models, speaker_model)
+        return (model_names, def_model), def_txt, (ref_audios, def_audio), (svc_type_list, def_svc_type), (
+            speaker_models, speaker_model)
+
 
     def language_change(lang):
-        (model_names, def_model), def_txt, (ref_audios, def_audio), (svc_type_list, def_svc_type), (speaker_models, speaker_model) = get_default_params(lang)
+        (model_names, def_model), def_txt, (ref_audios, def_audio), (svc_type_list, def_svc_type), (speaker_models,
+                                                                                                    speaker_model) = get_default_params(
+            lang)
 
         return gr.update(choices=model_names, value=def_model), gr.update(value=def_txt), \
-                gr.update(choices=ref_audios, value=def_audio), \
-                gr.update(choices=svc_type_list, value=def_svc_type), \
-                gr.update(choices=speaker_models, value=speaker_model), \
-                gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
-    
+            gr.update(choices=ref_audios, value=def_audio), \
+            gr.update(choices=svc_type_list, value=def_svc_type), \
+            gr.update(choices=speaker_models, value=speaker_model), \
+            gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
+
+
     def ref_audio_change(lang, audio_path):
         global refs_dict
         lang_alone = lang
@@ -1458,7 +1498,8 @@ F5-TTS + SOVITS + Applio + RVC
                 break
 
         return gr.update(value=def_txt)
-    
+
+
     def svc_type_change(lang, svc_type):
 
         lang_alone = lang
@@ -1476,11 +1517,11 @@ F5-TTS + SOVITS + Applio + RVC
             svc_models_list = applio_models_dict[lang_alone]
             for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
-        elif svc_type == "Sovits": 
+        elif svc_type == "Sovits":
             svc_models_list = sovits_models_dict[lang_alone]
             for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
-        elif svc_type == "RVC": 
+        elif svc_type == "RVC":
             svc_models_list = rvc_models_dict[lang_alone]
             for speaker in svc_models_list:
                 speaker_models.append(speaker["model_name"])
@@ -1491,19 +1532,20 @@ F5-TTS + SOVITS + Applio + RVC
         return gr.update(choices=speaker_models, value=speaker_model), \
             gr.update(interactive=(svc_type == "Applio" or svc_type == "RVC"))
 
+
     if len(F5_models_dict) > 0:
         def_lang = list(F5_models_dict.keys())[0]
         (model_names, def_model), def_txt, (ref_audios, def_audio), \
             (svc_type_list, def_svc_type), (speaker_models, speaker_model) = get_default_params(def_lang)
     else:
-        model_names = [], 
-        def_model = "", 
-        def_txt = "'", 
-        ref_audios = [], 
-        def_audio = "", 
+        model_names = [],
+        def_model = "",
+        def_txt = "'",
+        ref_audios = [],
+        def_audio = "",
         svc_type_list = [],
         def_svc_type = None,
-        speaker_models = [], 
+        speaker_models = [],
         speaker_model = None
         def_lang = ""
 
@@ -1513,32 +1555,32 @@ F5-TTS + SOVITS + Applio + RVC
                 # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
                 language = gr.Dropdown(
                     choices=list(F5_models_dict.keys()), value=def_lang, label="语言", allow_custom_value=True
-                    )
+                )
                 custom_ckpt_path = gr.Dropdown(
                     choices=model_names,
                     value=def_model,
                     allow_custom_value=True,
                     label="模型",
                     visible=True,
-                    )
+                )
                 ref_audio = gr.Dropdown(
                     choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=True
-                    )
+                )
 
             with gr.Row():
                 enable_svc = gr.Checkbox(
-                        label="启用音频转换",
-                        info="勾选此项，启动音频转换。",
-                        value=True,
-                    )
-                
+                    label="启用音频转换",
+                    info="勾选此项，启动音频转换。",
+                    value=True,
+                )
+
                 svc_type = gr.Dropdown(
                     choices=svc_type_list,
                     value=def_svc_type,
                     label="音频转换音色选择",
                     visible=True,
                 )
-                
+
                 svc_model = gr.Dropdown(
                     choices=speaker_models,
                     value=speaker_model,
@@ -1571,7 +1613,7 @@ F5-TTS + SOVITS + Applio + RVC
                     value=0,
                     step=0.01,
                     info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
-                    interactive=(def_svc_type=="Applio" or def_svc_type=="RVC"),
+                    interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
                     scale=2
                 )
 
@@ -1586,13 +1628,15 @@ F5-TTS + SOVITS + Applio + RVC
                     for j in range(max_per_row):
                         index = i * max_per_row + j
                         if index == 0:
-                            textbox = gr.Textbox(label=f"生成文本:{index+1}", lines=10, visible=True)
+                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=True)
                         else:
-                            textbox = gr.Textbox(label=f"生成文本:{index+1}", lines=10, visible=False)
+                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=False)
                         textboxes.append(textbox)
                     rows.append(row)
 
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
+
+            modify_words_input = gr.Textbox(label="改词", lines=10)
 
             with gr.Row():
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
@@ -1615,7 +1659,7 @@ F5-TTS + SOVITS + Applio + RVC
                     )
                     seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
                     remove_silence = gr.Checkbox(
-                            label="删除静音",
+                        label="删除静音",
                         info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
                         value=False,
                     )
@@ -1677,35 +1721,46 @@ F5-TTS + SOVITS + Applio + RVC
             )
 
             def basic_tts(
-                ref_audio_input,
-                ref_text_input,
-                language,
-                model_name,
-                password,
-                remove_silence,
-                randomize_seed,
-                seed_input,
-                save_line_audio,
-                insert_punct_in_space,
-                cross_fade_duration_slider,
-                nfe_slider,
-                speed_slider,
-                enable_svc,
-                svc_type,
-                svc_model,
-                tone_shift,
-                rvc_index_rate,
-                num_input,
-                *gen_texts_input,
+                    ref_audio_input,
+                    ref_text_input,
+                    language,
+                    model_name,
+                    password,
+                    remove_silence,
+                    randomize_seed,
+                    seed_input,
+                    save_line_audio,
+                    insert_punct_in_space,
+                    cross_fade_duration_slider,
+                    nfe_slider,
+                    speed_slider,
+                    enable_svc,
+                    svc_type,
+                    svc_model,
+                    tone_shift,
+                    rvc_index_rate,
+                    num_input,
+                    modify_words,
+                    *gen_texts_input,
             ):
                 if randomize_seed:
-                    seed_input = np.random.randint(0, 2**31 - 1)
+                    seed_input = np.random.randint(0, 2 ** 31 - 1)
+
+                gen_texts_input_modify = []
+                for text in gen_texts_input:
+                    for modify in modify_words.split("\n"):
+                        parts = modify.split("\t")
+                        if len(parts) != 2:
+                            continue
+                        else:
+                            text = text.replace(parts[0], parts[1])
+                            gen_texts_input_modify.append(text)
 
                 audio_out, gen_audio_list, used_seed = infer(
                     ref_audio_input,
                     ref_text_input,
                     num_input,
-                    gen_texts_input,
+                    gen_texts_input_modify,
                     language,
                     model_name,
                     password,
@@ -1716,34 +1771,36 @@ F5-TTS + SOVITS + Applio + RVC
                     speed=speed_slider,
                     save_line_audio=save_line_audio,
                     insert_punct_in_space=insert_punct_in_space,
-                    enable_svc = enable_svc,
-                    svc_type = svc_type,
-                    svc_model = svc_model,
-                    tone_shift = tone_shift,
-                    rvc_index_rate = rvc_index_rate,
+                    enable_svc=enable_svc,
+                    svc_type=svc_type,
+                    svc_model=svc_model,
+                    tone_shift=tone_shift,
+                    rvc_index_rate=rvc_index_rate,
                 )
                 return audio_out, gen_audio_list, used_seed
 
-            intputs = [ref_audio, 
-                    basic_ref_text_input, 
-                    language, 
-                    custom_ckpt_path, 
-                    password_input, 
-                    remove_silence, 
-                    randomize_seed,
-                    seed_input,
-                    save_line_audio, 
-                    insert_punct_in_space,
-                    cross_fade_duration_slider, 
-                    nfe_slider, 
-                    speed_slider, 
-                    enable_svc, 
-                    svc_type, 
-                    svc_model, 
-                    tone_shift_slider,
-                    rvc_index_rate_slider, 
-                    num_input
-                    ] + textboxes
+
+            intputs = [ref_audio,
+                       basic_ref_text_input,
+                       language,
+                       custom_ckpt_path,
+                       password_input,
+                       remove_silence,
+                       randomize_seed,
+                       seed_input,
+                       save_line_audio,
+                       insert_punct_in_space,
+                       cross_fade_duration_slider,
+                       nfe_slider,
+                       speed_slider,
+                       enable_svc,
+                       svc_type,
+                       svc_model,
+                       tone_shift_slider,
+                       rvc_index_rate_slider,
+                       num_input,
+                       modify_words_input
+                       ] + textboxes
 
             generate_btn.click(
                 basic_tts,
@@ -1755,7 +1812,7 @@ F5-TTS + SOVITS + Applio + RVC
                 clear_txt_boxs,
                 outputs=textboxes,
             )
-            
+
             download_all.click(None, [], [], js="""
                 () => {
                     const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '下载文件').parentElement;
@@ -1781,7 +1838,7 @@ F5-TTS + SOVITS + Applio + RVC
                 speaker_model = None
                 svc_type_list = []
                 def_svc_type = None
-                
+
                 global applio_models_dict
                 global rvc_models_dict
                 global sovits_models_dict
@@ -1804,11 +1861,11 @@ F5-TTS + SOVITS + Applio + RVC
                     svc_models_list = applio_models_dict[lang_alone]
                     for speaker in svc_models_list:
                         speaker_models.append(speaker["model_name"])
-                elif def_svc_type == "Sovits": 
+                elif def_svc_type == "Sovits":
                     svc_models_list = sovits_models_dict[lang_alone]
                     for speaker in svc_models_list:
                         speaker_models.append(speaker["model_name"])
-                elif def_svc_type == "RVC": 
+                elif def_svc_type == "RVC":
                     svc_models_list = rvc_models_dict[lang_alone]
                     for speaker in svc_models_list:
                         speaker_models.append(speaker["model_name"])
@@ -1819,7 +1876,8 @@ F5-TTS + SOVITS + Applio + RVC
                 return gr.update(choices=svc_type_list, value=def_svc_type), \
                     gr.update(choices=speaker_models, value=speaker_model), \
                     gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
-            
+
+
             def convert_svc_type_change(lang, svc_type):
 
                 lang_alone = lang
@@ -1837,11 +1895,11 @@ F5-TTS + SOVITS + Applio + RVC
                     svc_models_list = applio_models_dict[lang_alone]
                     for speaker in svc_models_list:
                         speaker_models.append(speaker["model_name"])
-                elif svc_type == "Sovits": 
+                elif svc_type == "Sovits":
                     svc_models_list = sovits_models_dict[lang_alone]
                     for speaker in svc_models_list:
                         speaker_models.append(speaker["model_name"])
-                elif svc_type == "RVC": 
+                elif svc_type == "RVC":
                     svc_models_list = rvc_models_dict[lang_alone]
                     for speaker in svc_models_list:
                         speaker_models.append(speaker["model_name"])
@@ -1851,7 +1909,8 @@ F5-TTS + SOVITS + Applio + RVC
 
                 return gr.update(choices=speaker_models, value=speaker_model), \
                     gr.update(interactive=(svc_type == "Applio" or svc_type == "RVC"))
-            
+
+
             def scanning_segm_audios():
                 gen_audio_path = "./gen_audio"
                 audios = []
@@ -1859,19 +1918,20 @@ F5-TTS + SOVITS + Applio + RVC
                     audios.append(gen_audio_path + "/" + file)
 
                 return audios
-            
+
+
             with gr.Row():
                 convert_language = gr.Dropdown(
                     choices=list(F5_models_dict.keys()), value=def_lang, label="语言", allow_custom_value=True
-                    )
-                
+                )
+
                 convert_svc_type = gr.Dropdown(
                     choices=svc_type_list,
                     value=def_svc_type,
                     label="音频转换音色选择",
                     visible=True,
                 )
-                
+
                 convert_svc_model = gr.Dropdown(
                     choices=speaker_models,
                     value=speaker_model,
@@ -1902,7 +1962,7 @@ F5-TTS + SOVITS + Applio + RVC
                     value=0,
                     step=0.01,
                     info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
-                    interactive=(def_svc_type=="Applio" or def_svc_type=="RVC"),
+                    interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
                 )
             with gr.Row():
                 input_convert_audios = gr.File(label="转换音频", file_count="multiple")
@@ -1912,7 +1972,7 @@ F5-TTS + SOVITS + Applio + RVC
                 convert_btn = gr.Button("转换", variant="primary")
                 segm_audio_btn = gr.Button("填充分段音频", variant="primary")
                 download_outputs = gr.Button("下载所有输出音频", variant="primary")
- 
+
             convert_language.change(
                 convert_language_change,
                 inputs=[convert_language],
@@ -1937,7 +1997,7 @@ F5-TTS + SOVITS + Applio + RVC
                 scanning_segm_audios,
                 outputs=[input_convert_audios],
             )
-            
+
             download_outputs.click(None, [], [], js="""
                 () => {
                     const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '输出音频').parentElement;
@@ -1950,6 +2010,27 @@ F5-TTS + SOVITS + Applio + RVC
                     }
                 }
             """)
+
+        modify_words_input.change(None, modify_words_input, None, js="(v)=>{ setStorage('modifyWords', v) }")
+
+        js_get_local_storage = """
+                   						    function() {
+                   						      globalThis.setStorage = (key, value)=>{
+                   						        localStorage.setItem(key, JSON.stringify(value))
+                   						      }
+                   						       globalThis.getStorage = (key, value)=>{
+                   						        return JSON.parse(localStorage.getItem(key))
+                   						      }
+                   						       var modifyWords = getStorage('modifyWords')
+                   						       return [modifyWords];
+                   						      }
+                   						    """
+        app.load(
+            None,
+            inputs=None,
+            outputs=[modify_words_input],
+            js=js_get_local_storage,
+        )
 
 
 @click.command()
