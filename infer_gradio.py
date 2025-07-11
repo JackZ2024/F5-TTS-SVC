@@ -22,6 +22,8 @@ import csv
 import py7zr
 import pathlib
 
+import yaml
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/rvc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/infer")
@@ -810,6 +812,21 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
     args.voice = svc_model
     args.wave = audio_filepath
     args.shift = pitch
+    config_file = os.path.join(os.path.dirname(model_path), "config.yaml")
+    custom_whisper = None
+    if os.path.exists(config_file):
+        def read_custom_whisper(file_path="config.yaml"):
+            try:
+                with open(file_path, 'r') as file:
+                    config = yaml.safe_load(file)
+                    return config.get('custom_whisper')
+            except (FileNotFoundError, yaml.YAMLError):
+                print(f"Error reading {file_path} or parsing YAML")
+                return None
+
+        # 使用示例
+        custom_whisper = read_custom_whisper(config_file)
+    print("custom whisper", custom_whisper)
 
     # 检查预训练模型是否存在，不存在就到网上下载
     whisper_pretrain = "./whisper_pretrain/large-v2.pt"
@@ -826,7 +843,7 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
         args.ppg = os.path.join(temp_dir, "svc_tmp.ppg.npy")
         print(
             f"Auto run : python whisper/inference.py -w {args.wave} -p {args.ppg}")
-        whisper_infer(args.wave, args.ppg)
+        whisper_infer(args.wave, args.ppg, custom_whisper)
 
     if (args.vec == None):
         args.vec = os.path.join(temp_dir, "svc_tmp.vec.npy")

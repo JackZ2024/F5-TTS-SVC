@@ -1,4 +1,6 @@
 import os.path
+import shutil
+import zipfile
 
 import gdown
 import wget
@@ -43,9 +45,12 @@ def ensure_models():
 
     if not os.path.exists("rmvpe_pretrain"):
         os.makedirs("rmvpe_pretrain")
-    if not os.path.exists("rmvpe_pretrain/rmvpe.pt"):
-        wget.download("https://huggingface.co/datasets/ylzz1997/rmvpe_pretrain_model/resolve/main/rmvpe.pt",
-                      out="rmvpe_pretrain/rmvpe.pt")
+    if not os.path.exists("rmvpe_pretrain/rmvpe2.pt"):
+        wget.download("https://github.com/yxlllc/RMVPE/releases/download/230917/rmvpe.zip", "rmvpe.zip")
+        with zipfile.ZipFile("rmvpe.zip", "r") as zip_ref:
+            zip_ref.extractall("rmvpe_pretrain")
+            shutil.move("rmvpe_pretrain/model.pt", "rmvpe_pretrain/rmvpe2.pt")
+        os.remove("rmvpe.zip")
 
 
 ensure_models()

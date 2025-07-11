@@ -1,16 +1,16 @@
 from typing import Union
-import sys, torch, numpy as np, traceback, pdb
-
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 from rmvpe import RMVPE
 
+
 class RMVPEF0Predictor:
     def __init__(self, hop_length=320, f0_min=50, f0_max=1100, dtype=torch.float32, device=None,
                  sampling_rate=16000,
                  threshold=0.05):
-        self.rmvpe = RMVPE(model_path="rmvpe_pretrain/rmvpe.pt", dtype=dtype, device=device)
+        self.rmvpe = RMVPE(model_path="rmvpe_pretrain/rmvpe2.pt", dtype=dtype, device=device)
         self.hop_length = hop_length
         self.f0_min = f0_min
         self.f0_max = f0_max
