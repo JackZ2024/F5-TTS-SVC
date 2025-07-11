@@ -51,6 +51,3 @@ def ensure_models():
             zip_ref.extractall("rmvpe_pretrain")
             shutil.move("rmvpe_pretrain/model.pt", "rmvpe_pretrain/rmvpe2.pt")
         os.remove("rmvpe.zip")
-
-
-ensure_models()
