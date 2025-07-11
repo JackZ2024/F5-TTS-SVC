@@ -10,6 +10,7 @@ import sys
 import time
 import threading
 import string
+import zipfile
 
 import click
 import gradio as gr
@@ -22,6 +23,7 @@ import csv
 import py7zr
 import pathlib
 
+import wget
 import yaml
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
@@ -832,6 +834,12 @@ def sovits_convert_audio(audio_filepath, model_path, speaker_path, pitch=0):
     whisper_pretrain = "./whisper_pretrain/large-v2.pt"
     if not os.path.exists(whisper_pretrain):
         download_sovits_models()
+    if not os.path.exists("rmvpe_pretrain/rmvpe2.pt"):
+        wget.download("https://github.com/yxlllc/RMVPE/releases/download/230917/rmvpe.zip", "rmvpe.zip")
+        with zipfile.ZipFile("rmvpe.zip", "r") as zip_ref:
+            zip_ref.extractall("rmvpe_pretrain")
+            shutil.move("rmvpe_pretrain/model.pt", "rmvpe_pretrain/rmvpe2.pt")
+        os.remove("rmvpe.zip")
 
     temp_dir = os.path.join("temp", "temp_" + os.path.basename(args.wave))
     if os.path.exists(temp_dir):
