@@ -1,4 +1,7 @@
 import sys,os
+
+import huggingface_hub
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import argparse
@@ -22,10 +25,6 @@ def load_model(path, device) -> Whisper:
     if not (device == "cpu"):
         model.half()
     model.to(device)
-    # torch.save({
-    #     'dims': checkpoint["dims"],
-    #     'model_state_dict': model.state_dict(),
-    # }, "large-v2.pt")
     return model
 
 
@@ -65,11 +64,14 @@ def pred_ppg(whisper: Whisper, wavPath, ppgPath, device):
 whisper_model = None
 
 
-def whisper_infer(wavPath, ppgPath):
+def whisper_infer(wavPath, ppgPath, custom_whisper):
     global whisper_model
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if whisper_model is None:
-        whisper_model = load_model(os.path.join("whisper_pretrain", "large-v2.pt"), device)
+        if custom_whisper:
+            whisper_model = load_model(os.path.join(huggingface_hub.snapshot_download(custom_whisper), "large-v2.pt"), device)
+        else:
+            whisper_model = load_model(os.path.join("whisper_pretrain", "large-v2.pt"), device)
     pred_ppg(whisper_model, wavPath, ppgPath, device)
 
 

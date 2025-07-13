@@ -82,6 +82,10 @@ Powered by [@ShadowVap](https://space.bilibili.com/491283091)
 python app.py
 ```
 
+如果模型使用自定义whisper参与训练，需要在模型包里面加一个config.yaml，写上
+
+custom_whisper: LukeJacob2023/whisper-thai （实际模型id根据自己的）
+
 ## 手动推理（需先训练好模型）
 1. 导出推理模型：文本编码器，Flow网络，Decoder网络；判别器和后验编码器等只在训练中使用。刚训练好的是pt格式，导出是pth格式  
    ```
@@ -155,6 +159,13 @@ dataset_raw
 ```shell
 python svc_preprocessing.py -t 2
 ```
+
+如果使用自定义whisper，可以使用命令(指定模型的huggingface id，下面例子是泰语的)
+
+```shell
+python svc_preprocessing.py -t 2 --custom_whisper LukeJacob2023/whisper-thai
+```
+
 -t：指定线程数，必须是正整数且不得超过CPU总核心数，一般写2就可以了
 
 预处理完成后文件夹结构如下面所示

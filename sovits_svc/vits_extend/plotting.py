@@ -9,10 +9,21 @@ import matplotlib.pylab as plt
 
 
 def save_figure_to_numpy(fig):
-    # save it to a numpy array.
-    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    # Ensure the figure is drawn
+    fig.canvas.draw()
+    
+    # Get the RGBA buffer from the canvas
+    rgba_buffer = fig.canvas.buffer_rgba()
+    
+    # Convert to a NumPy array
+    data = np.asarray(rgba_buffer, dtype=np.uint8)
+    
+    # Extract RGB channels (discard alpha) and reshape to (height, width, 3)
+    data = data[:, :, :3]
+    
+    # Transpose to (3, height, width) as required
     data = np.transpose(data, (2, 0, 1))
+    
     return data
 
 

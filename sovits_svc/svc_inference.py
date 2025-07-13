@@ -5,10 +5,10 @@ from pathlib import Path
 
 from hubert.inference import hubert_infer
 from pitch.inference import pitch_infer
-# from svc_ensure_models import ensure_models
+from svc_ensure_models import ensure_models
 from whisper.inference import whisper_infer
 
-# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import torch
 import argparse
 import numpy as np
@@ -151,7 +151,7 @@ def main(args):
         print(
             f"Auto run : python whisper/inference.py -w {args.wave} -p {args.ppg}")
         # os.system(f"python whisper/inference.py -w {args.wave} -p {args.ppg}")
-        whisper_infer(args.wave, args.ppg)
+        whisper_infer(args.wave, args.ppg, args.custom_whisper)
 
     if (args.vec == None):
         args.vec = os.path.join(temp_dir, "svc_tmp.vec.npy")
