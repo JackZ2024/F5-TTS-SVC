@@ -1674,7 +1674,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     svc_type = gr.Dropdown(
                         choices=svc_type_list,
                         value=def_svc_type,
-                        label="音频转换音色选择",
+                        label="音频转换类型选择",
                         visible=True,
                     )
 
@@ -1881,7 +1881,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 }
             """)
 
-        with gr.TabItem("音色转换", visible=False):
+        with gr.TabItem("音色转换"):
             def convert_language_change(lang):
 
                 lang_alone = lang
