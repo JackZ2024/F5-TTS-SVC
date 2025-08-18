@@ -6,8 +6,12 @@ from collections import defaultdict
 from importlib.resources import files
 
 import jieba
+import pypinyin
 import torch
 from pypinyin import Style, lazy_pinyin
+from pypinyin.constants import (
+    Style
+)
 from torch.nn.utils.rnn import pad_sequence
 
 
@@ -85,9 +89,9 @@ def list_str_to_tensor(text: list[str], padding_value=-1) -> int["b nt"]:  # noq
 
 # char tokenizer, based on custom dataset's extracted .txt file
 def list_str_to_idx(
-    text: list[str] | list[list[str]],
-    vocab_char_map: dict[str, int],  # {char: idx}
-    padding_value=-1,
+        text: list[str] | list[list[str]],
+        vocab_char_map: dict[str, int],  # {char: idx}
+        padding_value=-1,
 ) -> int["b nt"]:  # noqa: F722
     list_idx_tensors = [torch.tensor([vocab_char_map.get(c, 0) for c in t]) for t in text]  # pinyin or char style
     text = pad_sequence(list_idx_tensors, padding_value=padding_value, batch_first=True)
@@ -130,6 +134,37 @@ def get_tokenizer(dataset_name, tokenizer: str = "pinyin"):
     return vocab_char_map, vocab_size
 
 
+def load_pypinyin_dict_file(file_path):
+    """
+    加载自定义拼音词典文件。
+    文件格式示例： 好使唤人: hào shǐ huàn rén
+    转换为 pypinyin 格式： {'好使唤人': [['hào'], ['shǐ'], ['huàn'], ['rén']]}
+    """
+    custom_phrases = {}
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            # 跳过空行或无效行
+            if ':' not in line:
+                continue
+
+            # 分割词语和拼音部分
+            word, pinyins_str = line.split(':', 1)
+            word = word.strip()
+
+            # 按空格分割拼音字符串
+            pinyins_list = pinyins_str.strip().split()
+
+            # 将拼音列表转换为 pypinyin 需要的嵌套列表格式
+            # 例如 ['hào', 'shǐ'] -> [['hào'], ['shǐ']]
+            formatted_pinyins = [[p] for p in pinyins_list]
+
+            if word:
+                custom_phrases[word] = formatted_pinyins
+
+    return custom_phrases
+
+
 # convert char to pinyin
 
 
@@ -137,6 +172,16 @@ def convert_char_to_pinyin(text_list, polyphone=True):
     if jieba.dt.initialized is False:
         jieba.default_logger.setLevel(50)  # CRITICAL
         jieba.initialize()
+
+        jieba_dict_file = str(files("f5_tts").joinpath(f"dicts/jieba.txt"))
+        if os.path.exists(jieba_dict_file):
+            print(f"加载jieba词典{jieba_dict_file}")
+            jieba.load_userdict(jieba_dict_file)
+
+        pypinyin_dict_file = str(files("f5_tts").joinpath(f"dicts/pypinyin.txt"))
+        if os.path.exists(pypinyin_dict_file):
+            print(f"加载pypinyin词典{pypinyin_dict_file}")
+            pypinyin.load_phrases_dict(load_pypinyin_dict_file(pypinyin_dict_file))
 
     final_text_list = []
     
@@ -147,7 +192,7 @@ def convert_char_to_pinyin(text_list, polyphone=True):
 
     def is_chinese(c):
         return (
-            "\u3100" <= c <= "\u9fff"  # common chinese characters
+                "\u3100" <= c <= "\u9fff"  # common chinese characters
         )
 
     for text in text_list:
@@ -185,7 +230,7 @@ def convert_char_to_pinyin(text_list, polyphone=True):
 def repetition_found(text, length=2, tolerance=10):
     pattern_count = defaultdict(int)
     for i in range(len(text) - length + 1):
-        pattern = text[i : i + length]
+        pattern = text[i: i + length]
         pattern_count[pattern] += 1
     for pattern, count in pattern_count.items():
         if count > tolerance:
