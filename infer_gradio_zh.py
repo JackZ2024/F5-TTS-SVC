@@ -231,7 +231,7 @@ def load_F5_models_list():
                             models_dict[language] = [model_dict]
 
                         break
-
+    print(models_dict)
     return models_dict
 
 
@@ -556,6 +556,7 @@ applio_models_dict = load_applio_models_list()
 rvc_models_dict = load_rvc_models_list()
 refs_dict = load_refs_list()
 launch_in_service = False
+stop_infer = False
 
 
 def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
@@ -1159,7 +1160,10 @@ def infer(
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
-        return gr.update(), []
+        return gr.update(), [], False
+
+    global stop_infer
+    stop_infer = False
 
     # Set inference seed
     if seed < 0 or seed > 2 ** 31 - 1:
@@ -1181,17 +1185,17 @@ def infer(
     ema_model = load_custom(model_name, language, password)
     if ema_model is None:
         gr.Warning("模型加载失败")
-        return gr.update(), []
+        return gr.update(), [], used_seed
 
     # 检查用户设置的输入框数量是否正常
     try:
         num_input = int(num_input)
         if num_input <= 0 or num_input > 20:
             gr.Warning("输入框数量设置不对")
-            return gr.update(), []
+            return gr.update(), [], used_seed
     except ValueError:
         gr.Warning("输入框数量无法转换为数字")
-        return gr.update(), []
+        return gr.update(), [], used_seed
 
     # 把所有的输入框的文本都获取出来，汇总到一块，生成时也用总的这个列表，这样方便显示总进度
     # 如果要根据框保存中间结果，那就在生成的过程中判断是第几个框，所以保存每个框里的文本行的数量。
@@ -1216,7 +1220,7 @@ def infer(
 
     if len(text_box_text_list) == 0:
         gr.Warning("没有要生成的文本")
-        return gr.update(), []
+        return gr.update(), [], used_seed
 
     # 删除旧的音频文件
     global launch_in_service
@@ -1272,7 +1276,7 @@ def infer(
         enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password,
                                                              show_info)
         if model_path is None:
-            return gr.update(), []
+            return gr.update(), [], used_seed
 
     # 开始生成
     generated_waves = []
@@ -1285,6 +1289,9 @@ def infer(
     svc_sampling_rate = 32000
     segm_audio_list = []
     for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
+        if stop_infer:
+            gr.Warning("停止生成")
+            return gr.update(), [], used_seed
 
         final_wave, final_sample_rate, combined_spectrogram = infer_process(
             ref_audio,
@@ -1411,15 +1418,14 @@ def load_ref_txt(ref_txt_path):
 
 
 with gr.Blocks(title="F5-TTS-SVC_v3") as app:
-    gr.Markdown(
-        """
-# 自定义 F5 TTS + SVC
+    #     gr.Markdown(
+    #         """
+    # # 自定义 F5 TTS + SVC
 
-F5-TTS + SOVITS + Applio + RVC
+    # F5-TTS + SOVITS + Applio + RVC
 
-"""
-    )
-
+    # """
+    #     )
 
     def get_default_params(lang):
         global F5_models_dict
@@ -1517,12 +1523,14 @@ F5-TTS + SOVITS + Applio + RVC
 
         ref_audio_dict = refs_dict.get(lang_alone, {})
         def_txt = ""
+        def_audio = ""
         for key, value in ref_audio_dict.items():
             if key == audio_path:
+                def_audio = key
                 def_txt = load_ref_txt(value).strip()
                 break
 
-        return gr.update(value=def_txt)
+        return gr.update(value=def_audio), gr.update(value=def_txt)
 
 
     def svc_type_change(lang, svc_type):
@@ -1556,6 +1564,11 @@ F5-TTS + SOVITS + Applio + RVC
 
         return gr.update(choices=speaker_models, value=speaker_model), \
             gr.update(interactive=(svc_type == "Applio" or svc_type == "RVC"))
+
+
+    def stop_infer_btn():
+        global stop_infer
+        stop_infer = True
 
 
     if len(F5_models_dict) > 0:
@@ -1592,35 +1605,7 @@ F5-TTS + SOVITS + Applio + RVC
                     choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=True
                 )
 
-            with gr.Row():
-                enable_svc = gr.Checkbox(
-                    label="启用音频转换",
-                    info="勾选此项，启动音频转换。",
-                    value=True,
-                )
-
-                svc_type = gr.Dropdown(
-                    choices=svc_type_list,
-                    value=def_svc_type,
-                    label="音频转换音色选择",
-                    visible=True,
-                )
-
-                svc_model = gr.Dropdown(
-                    choices=speaker_models,
-                    value=speaker_model,
-                    label="音频转换音色选择",
-                    visible=True,
-                )
-
-                password_input = gr.Textbox(
-                    label="解压密码:",
-                    type="password",
-                    lines=1,
-                    value="",
-                )
-
-            with gr.Row():
+            with gr.Row(visible=False):
                 num_input = gr.Textbox(label="请输入需要的输入框数量(1-20)", value="1", scale=1)
                 tone_shift_slider = gr.Slider(
                     label="音调调整",
@@ -1661,19 +1646,75 @@ F5-TTS + SOVITS + Applio + RVC
 
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
-            modify_words_input = gr.Textbox(label="改词", lines=10)
-
             with gr.Row():
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载所有输出音频", variant="primary")
+                stop_btn = gr.Button("Stop", variant="primary")
 
             with gr.Accordion("高级设置", open=False):
-                basic_ref_text_input = gr.Textbox(
-                    label="参考音频对应文本",
-                    info="如果留空则自动转录生成. 如果输入文本，则使用输入的文本，建议输入标准文本，转录出来的文本准确性可能不高。",
-                    lines=2,
-                    value=def_txt,
+                gr.Markdown("如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
+                with gr.Row(equal_height=True):
+                    basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
+                    basic_ref_audio_user = gr.Audio(label="用户上传参考音频",sources= ["upload"], type="filepath")
+                    basic_ref_text_input = gr.Textbox(
+                        label="参考音频对应文本",
+                        info="如果留空则自动转录生成. 如果输入文本，则使用输入的文本，建议输入标准文本，转录出来的文本准确性可能不高。",
+                        lines=2,
+                        value=def_txt,
+                    )
+                modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
+                with gr.Row(visible=False):
+                    enable_svc = gr.Checkbox(
+                        label="启用音频转换",
+                        info="勾选此项，启动音频转换。",
+                        value=False,
+                    )
+
+                    svc_type = gr.Dropdown(
+                        choices=svc_type_list,
+                        value=def_svc_type,
+                        label="音频转换类型选择",
+                        visible=True,
+                    )
+
+                    svc_model = gr.Dropdown(
+                        choices=speaker_models,
+                        value=speaker_model,
+                        label="音频转换音色选择",
+                        visible=True,
+                    )
+
+                    password_input = gr.Textbox(
+                        label="解压密码:",
+                        type="password",
+                        lines=1,
+                        value="",
+                    )
+
+                speed_slider = gr.Slider(
+                    label="语速设置",
+                    minimum=0.3,
+                    maximum=2.0,
+                    value=0.9,
+                    step=0.1,
+                    info="调整音频语速",
+                )
+                nfe_slider = gr.Slider(
+                    label="NFE Steps",
+                    minimum=4,
+                    maximum=64,
+                    value=32,
+                    step=2,
+                    info="Set the number of denoising steps.",
+                )
+                cross_fade_duration_slider = gr.Slider(
+                    label="Cross-Fade Duration (s)",
+                    minimum=0.0,
+                    maximum=1.0,
+                    value=0.15,
+                    step=0.01,
+                    info="设置两个片段之前的静音时长",
                 )
                 with gr.Row():
                     randomize_seed = gr.Checkbox(
@@ -1697,32 +1738,8 @@ F5-TTS + SOVITS + Applio + RVC
                         label="插入标点",
                         info="此功能针对泰语，在空格处插入逗号",
                         value=False,
+                        visible=False
                     )
-                speed_slider = gr.Slider(
-                    label="语速设置",
-                    minimum=0.3,
-                    maximum=2.0,
-                    value=0.8,
-                    step=0.1,
-                    info="调整音频语速",
-                )
-                nfe_slider = gr.Slider(
-                    label="NFE Steps",
-                    minimum=4,
-                    maximum=64,
-                    value=64,
-                    step=2,
-                    info="Set the number of denoising steps.",
-                )
-                cross_fade_duration_slider = gr.Slider(
-                    label="Cross-Fade Duration (s)",
-                    minimum=0.0,
-                    maximum=1.0,
-                    value=0.15,
-                    step=0.01,
-                    info="设置两个片段之前的静音时长",
-                )
-
             audio_output = gr.Audio(label="合成音频")
             download_output = gr.File(label="下载文件", file_count="multiple")
 
@@ -1735,7 +1752,7 @@ F5-TTS + SOVITS + Applio + RVC
             ref_audio.change(
                 ref_audio_change,
                 inputs=[language, ref_audio],
-                outputs=[basic_ref_text_input],
+                outputs=[basic_ref_audio_preset, basic_ref_text_input],
                 show_progress="hidden",
             )
             svc_type.change(
@@ -1745,8 +1762,10 @@ F5-TTS + SOVITS + Applio + RVC
                 show_progress="hidden",
             )
 
+
             def basic_tts(
-                    ref_audio_input,
+                    ref_audio_preset,
+                    ref_audio_user,
                     ref_text_input,
                     language,
                     model_name,
@@ -1783,7 +1802,10 @@ F5-TTS + SOVITS + Applio + RVC
                                 gen_texts_input_modify.append(text)
                 else:
                     gen_texts_input_modify = gen_texts_input
-
+                if ref_audio_user:
+                    ref_audio_input = ref_audio_user
+                else:
+                    ref_audio_input = ref_audio_preset
                 audio_out, gen_audio_list, used_seed = infer(
                     ref_audio_input,
                     ref_text_input,
@@ -1808,7 +1830,8 @@ F5-TTS + SOVITS + Applio + RVC
                 return audio_out, gen_audio_list, used_seed
 
 
-            intputs = [ref_audio,
+            intputs = [basic_ref_audio_preset,
+                       basic_ref_audio_user,
                        basic_ref_text_input,
                        language,
                        custom_ckpt_path,
@@ -1839,6 +1862,10 @@ F5-TTS + SOVITS + Applio + RVC
             clear_box_btn.click(
                 clear_txt_boxs,
                 outputs=textboxes,
+            )
+
+            stop_btn.click(
+                stop_infer_btn
             )
 
             download_all.click(None, [], [], js="""

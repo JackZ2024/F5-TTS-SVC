@@ -1,4 +1,7 @@
-import sys,os
+import sys, os
+
+import huggingface_hub
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import argparse
@@ -34,7 +37,7 @@ def pred_ppg(whisper: Whisper, wavPath, ppgPath):
     mel = log_mel_spectrogram(audio).half().to(whisper.device)
     with torch.no_grad():
         ppg = whisper.encoder(mel.unsqueeze(0)).squeeze().data.cpu().float().numpy()
-        ppg = ppg[:ppgln,]  # [length, dim=1280]
+        ppg = ppg[:ppgln, ]  # [length, dim=1280]
         # print(ppg.shape)
         np.save(ppgPath, ppg, allow_pickle=False)
 
@@ -43,6 +46,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-w", "--wav", help="wav", dest="wav", required=True)
     parser.add_argument("-p", "--ppg", help="ppg", dest="ppg", required=True)
+    parser.add_argument("--custom_whisper", help="custom whisper", dest="custom_whisper", required=False)
     args = parser.parse_args()
     print(args.wav)
     print(args.ppg)
@@ -51,7 +55,10 @@ if __name__ == "__main__":
     wavPath = args.wav
     ppgPath = args.ppg
 
-    whisper = load_model(os.path.join("whisper_pretrain", "large-v2.pt"))
+    if args.custom_whisper:
+        whisper = load_model(os.path.join(huggingface_hub.snapshot_download(args.custom_whisper), "large-v2.pt"))
+    else:
+        whisper = load_model(os.path.join("whisper_pretrain", "large-v2.pt"))
     spkPaths = os.listdir(wavPath)
     random.shuffle(spkPaths)
 
