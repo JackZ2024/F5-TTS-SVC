@@ -1630,8 +1630,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
 
 
     def get_whisper_folder():
-        if os.path.exists("./whisper_models/whisper_medium_zh_ct2"):
-            return "./whisper_models/whisper_medium_zh_ct2"
+        if os.path.exists("./whisper_models/whisper-medium-zh-ct2"):
+            return "./whisper_models/whisper-medium-zh-ct2"
         else:
             return "deepdml/faster-whisper-large-v3-turbo-ct2"
 
