@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import os.path
 import threading
 import time
 from collections import OrderedDict
@@ -110,12 +111,18 @@ class WhisperModelManager:
         return huggingface_hub.snapshot_download(repo_id, **kwargs)
 
     def _load_fn(self, model_id: str) -> WhisperModel:
-
-        return WhisperModel(
-            self.download_model(model_id),
-            device='cuda',
-            device_index=list(range(ctranslate2.get_cuda_device_count()))
-        )
+        if os.path.exists(model_id):
+            return WhisperModel(
+                model_id,
+                device='cuda',
+                device_index=list(range(ctranslate2.get_cuda_device_count()))
+            )
+        else:
+            return WhisperModel(
+                self.download_model(model_id),
+                device='cuda',
+                device_index=list(range(ctranslate2.get_cuda_device_count()))
+            )
 
     def _handle_model_unload(self, model_name: str) -> None:
         with self._lock:
