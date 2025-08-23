@@ -1793,7 +1793,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     label="NFE Steps",
                     minimum=4,
                     maximum=64,
-                    value=7,  # 7步会使用EPSS推理 https://arxiv.org/pdf/2505.19931
+                    value=16,  # 16步会使用EPSS推理 https://arxiv.org/pdf/2505.19931
                     step=2,
                     info="Set the number of denoising steps.",
                 )
