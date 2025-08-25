@@ -1300,6 +1300,12 @@ def infer(
             infer_running = False
             return gr.update(), [], used_seed
 
+    f_version = model_name.rpartition('-')[-1]
+    s_version = svc_model.rpartition('-')[-1]
+    try:
+        f_version = float(f_version)
+    except:
+        f_version = 0.0
     # 开始生成
     generated_waves = []
     svc_waves = []
@@ -1317,8 +1323,7 @@ def infer(
             infer_running = False
             return gr.update(), [], used_seed
             
-            
-        if "泰语-sit-男-5" in model_name:
+        if "泰语" in model_name and f_version >= 5.0:
             final_wave, final_sample_rate, combined_spectrogram = thai_infer_process(
                 ref_audio,
                 ref_text,
@@ -1364,7 +1369,7 @@ def infer(
         # 保存中间结果
         if save_line_audio:
             # 按行保存
-            audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{i + 1}.wav"
+            audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{i + 1}.wav"
             sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
             segm_audio_list.append(audio_filepath)
 
@@ -1394,7 +1399,8 @@ def infer(
             # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
             if i == total_box_count - 1:
                 final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
-                audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{cur_box_index}.wav"
+                
+                audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{cur_box_index}.wav"
                 sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
                 segm_audio_list.append(audio_filepath)
 
@@ -1412,7 +1418,8 @@ def infer(
     output_audio_list = []
     if enable_svc:
         # 导出合并后的24Khz音频
-        last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        # last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_orgi_audio_path = last_audio_path + f"/orgi_audio-f{f_version}-p{speed}.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
@@ -1420,7 +1427,8 @@ def infer(
             output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
-        last_gen_audio_path = last_audio_path + f"/{svc_model}_{svc_type.lower()}_audio.wav"
+        # last_gen_audio_path = last_audio_path + f"/{svc_model}_{svc_type.lower()}_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/svc_audio-f{f_version}-{svc_type.lower()[0]}{s_version}-p{speed}.wav"
         final_waves = None
         if len(svc_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, svc_waves, svc_sampling_rate)
@@ -1429,7 +1437,8 @@ def infer(
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        # last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/orgi_audio-f{f_version}-p{speed}.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
