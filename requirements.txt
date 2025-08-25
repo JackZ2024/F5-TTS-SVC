@@ -17,8 +17,8 @@ pypinyin
 # safetensors
 # soundfile
 # tomli
-torch>=2.0.0
-torchaudio>=2.0.0
+#torch>=2.0.0
+#torchaudio>=2.0.0
 torchdiffeq
 tqdm>=4.65.0
 transformers
@@ -40,6 +40,13 @@ praat-parselmouth
 py7zr
 huggingface_hub
 wandb
+
+pythainlp
+syllapy
+ssg
+tltk
+phonemizer
+langdetect
 
 # Applio
 noisereduce
