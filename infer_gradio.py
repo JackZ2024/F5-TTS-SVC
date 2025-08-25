@@ -563,6 +563,7 @@ rvc_models_dict = load_rvc_models_list()
 refs_dict = load_refs_list()
 launch_in_service = False
 stop_infer = False
+infer_running = False
 
 
 def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
@@ -1168,8 +1169,14 @@ def infer(
         gr.Warning("Please provide reference audio.")
         return gr.update(), [], 0
         
+    global infer_running
+    if infer_running:
+        gr.Warning("音频生成中，请稍后再试。")
+        return gr.update(), [], 0
+        
     global stop_infer    
     stop_infer = False
+    infer_running = True
 
     # Set inference seed
     if seed < 0 or seed > 2 ** 31 - 1:
@@ -1192,6 +1199,7 @@ def infer(
     ema_model = load_custom(model_name, language, password)
     if ema_model is None:
         gr.Warning("模型加载失败")
+        infer_running = False
         return gr.update(), [], used_seed
 
     # 检查用户设置的输入框数量是否正常
@@ -1199,9 +1207,11 @@ def infer(
         num_input = int(num_input)
         if num_input <= 0 or num_input > 20:
             gr.Warning("输入框数量设置不对")
+            infer_running = False
             return gr.update(), [], used_seed
     except ValueError:
         gr.Warning("输入框数量无法转换为数字")
+        infer_running = False
         return gr.update(), [], used_seed
 
     # 把所有的输入框的文本都获取出来，汇总到一块，生成时也用总的这个列表，这样方便显示总进度
@@ -1230,6 +1240,7 @@ def infer(
 
     if len(text_box_text_list) == 0:
         gr.Warning("没有要生成的文本")
+        infer_running = False
         return gr.update(), [], used_seed
 
     # 删除旧的音频文件
@@ -1286,6 +1297,7 @@ def infer(
         enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password,
                                                              show_info)
         if model_path is None:
+            infer_running = False
             return gr.update(), [], used_seed
 
     # 开始生成
@@ -1301,6 +1313,8 @@ def infer(
     for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
         if stop_infer:
             gr.Warning("停止生成")
+            print("停止生成")
+            infer_running = False
             return gr.update(), [], used_seed
             
             
@@ -1335,6 +1349,12 @@ def infer(
                 # lang=lang,
             )
 
+        if stop_infer:
+            gr.Warning("停止生成")
+            print("停止生成")
+            infer_running = False
+            return gr.update(), [], used_seed
+            
         generated_waves.append(final_wave)
         spectrograms.append(combined_spectrogram)
 
@@ -1383,6 +1403,12 @@ def infer(
                     total_box_count += text_box_text_list[cur_box_index]
                     cur_box_index += 1
 
+    if stop_infer:
+        gr.Warning("停止生成")
+        print("停止生成")
+        infer_running = False
+        return gr.update(), [], used_seed
+    
     output_audio_list = []
     if enable_svc:
         # 导出合并后的24Khz音频
@@ -1417,6 +1443,7 @@ def infer(
         final_waves = final_waves.squeeze().cpu().numpy()
 
     output_audio_list.extend(segm_audio_list)
+    infer_running = False
     return (final_sample_rate, final_waves), output_audio_list, used_seed
 
 
@@ -1445,7 +1472,7 @@ def load_ref_txt(ref_txt_path):
     return txt
 
 
-with gr.Blocks(title="F5-TTS-SVC_v3") as app:
+with gr.Blocks(title="F5-TTS-SVC_v4") as app:
     gr.Markdown(
         """
 # 自定义 F5 TTS + SVC
@@ -1596,7 +1623,15 @@ F5-TTS + SOVITS + Applio + RVC
     def stop_infer_btn():
         global stop_infer
         stop_infer = True
-    
+        
+    # 定义定时调用的异步函数
+    def update_running_status():
+        global infer_running
+        if infer_running:
+            return "TTS服务使用中", gr.update(interactive=False)
+        else:
+            return "TTS服务可用", gr.update(interactive=True)
+
     if len(F5_models_dict) > 0:
         def_lang = list(F5_models_dict.keys())[0]
         (model_names, def_model), def_txt, (ref_audios, def_audio), \
@@ -1604,7 +1639,7 @@ F5-TTS + SOVITS + Applio + RVC
     else:
         model_names = [],
         def_model = "",
-        def_txt = "'",
+        def_txt = "",
         ref_audios = [],
         def_audio = "",
         svc_type_list = [],
@@ -1680,7 +1715,8 @@ F5-TTS + SOVITS + Applio + RVC
                     interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
                     scale=2
                 )
-
+                running_info = gr.Textbox(label="", value="", scale=1)
+               
             # 动态布局区域
             rows = []
             max_per_row = 5
@@ -1705,6 +1741,9 @@ F5-TTS + SOVITS + Applio + RVC
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载所有输出音频", variant="primary")
                 stop_btn = gr.Button("停止", variant="primary")
+                
+            update_running_status_timer = gr.Timer(1)
+            update_running_status_timer.tick(update_running_status, inputs=None, outputs=[running_info, generate_btn])
 
             with gr.Accordion("高级设置", open=False):
                 basic_ref_text_input = gr.Textbox(
