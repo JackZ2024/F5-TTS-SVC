@@ -11,6 +11,7 @@ import time
 import threading
 import string
 import zipfile
+import traceback
 
 import click
 import gradio as gr
@@ -758,6 +759,8 @@ def get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_in
             elif svc_type == "RVC":
                 # RVC
                 return get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info)
+    else:
+        return False, "", ""
 
 
 class sovits_parms():
@@ -1859,42 +1862,48 @@ F5-TTS + SOVITS + Applio + RVC
             ):
                 if randomize_seed:
                     seed_input = np.random.randint(0, 2 ** 31 - 1)
+                try:
+                    if len(modify_words) > 0:
+                        gen_texts_input_modify = []
+                        for text in gen_texts_input:
+                            for modify in modify_words.split("\n"):
+                                parts = modify.split("\t")
+                                if len(parts) != 2:
+                                    continue
+                                else:
+                                    text = text.replace(parts[0], parts[1])
+                                    gen_texts_input_modify.append(text)
+                    else:
+                        gen_texts_input_modify = gen_texts_input
 
-                if len(modify_words) > 0:
-                    gen_texts_input_modify = []
-                    for text in gen_texts_input:
-                        for modify in modify_words.split("\n"):
-                            parts = modify.split("\t")
-                            if len(parts) != 2:
-                                continue
-                            else:
-                                text = text.replace(parts[0], parts[1])
-                                gen_texts_input_modify.append(text)
-                else:
-                    gen_texts_input_modify = gen_texts_input
-
-                audio_out, gen_audio_list, used_seed = infer(
-                    ref_audio_input,
-                    ref_text_input,
-                    num_input,
-                    gen_texts_input_modify,
-                    language,
-                    model_name,
-                    password,
-                    remove_silence,
-                    seed=seed_input,
-                    cross_fade_duration=cross_fade_duration_slider,
-                    nfe_step=nfe_slider,
-                    speed=speed_slider,
-                    save_line_audio=save_line_audio,
-                    insert_punct_in_space=insert_punct_in_space,
-                    enable_svc=enable_svc,
-                    svc_type=svc_type,
-                    svc_model=svc_model,
-                    tone_shift=tone_shift,
-                    rvc_index_rate=rvc_index_rate,
-                )
-                return audio_out, gen_audio_list, used_seed
+                    audio_out, gen_audio_list, used_seed = infer(
+                        ref_audio_input,
+                        ref_text_input,
+                        num_input,
+                        gen_texts_input_modify,
+                        language,
+                        model_name,
+                        password,
+                        remove_silence,
+                        seed=seed_input,
+                        cross_fade_duration=cross_fade_duration_slider,
+                        nfe_step=nfe_slider,
+                        speed=speed_slider,
+                        save_line_audio=save_line_audio,
+                        insert_punct_in_space=insert_punct_in_space,
+                        enable_svc=enable_svc,
+                        svc_type=svc_type,
+                        svc_model=svc_model,
+                        tone_shift=tone_shift,
+                        rvc_index_rate=rvc_index_rate,
+                    )
+                    return audio_out, gen_audio_list, used_seed
+                except Exception as e:
+                    traceback.print_exc()  # 打印完整堆栈信息
+                    print(model_name, svc_model)
+                    global infer_running
+                    infer_running = False
+                    return gr.update(), [], 0
 
 
             intputs = [ref_audio,
