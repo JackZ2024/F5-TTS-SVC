@@ -11,6 +11,7 @@ import time
 import threading
 import string
 import zipfile
+import traceback
 
 import click
 import gradio as gr
@@ -39,6 +40,12 @@ from f5_tts.infer.utils_infer import (
     remove_silence_for_generated_wav,
     save_spectrogram,
 )
+from f5_tts.model.utils import seed_everything
+
+# import f5_tts_thai
+from f5_tts_thai.cleantext.number_tha import replace_numbers_with_thai
+from f5_tts_thai.cleantext.th_repeat import process_thai_repeat
+from f5_tts_thai.infer.utils_infer import infer_process as thai_infer_process
 
 # sovits
 from sovits_svc import svc_inference
@@ -144,7 +151,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
 
     global pre_custom_path, custom_ema_model
     if pre_custom_path != ckpt_path or custom_ema_model is None:
-        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
+        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
         pre_custom_path = ckpt_path
 
     return custom_ema_model
@@ -556,6 +563,8 @@ applio_models_dict = load_applio_models_list()
 rvc_models_dict = load_rvc_models_list()
 refs_dict = load_refs_list()
 launch_in_service = False
+stop_infer = False
+infer_running = False
 
 
 def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
@@ -750,6 +759,8 @@ def get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password, show_in
             elif svc_type == "RVC":
                 # RVC
                 return get_rvc_model(svc_model, lang_alone, password, show_info=gr.Info)
+    else:
+        return False, "", ""
 
 
 class sovits_parms():
@@ -1159,13 +1170,23 @@ def infer(
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
-        return gr.update(), []
+        return gr.update(), [], 0
+        
+    global infer_running
+    if infer_running:
+        gr.Warning("音频生成中，请稍后再试。")
+        return gr.update(), [], 0
+        
+    global stop_infer    
+    stop_infer = False
+    infer_running = True
 
     # Set inference seed
     if seed < 0 or seed > 2 ** 31 - 1:
         gr.Warning("Seed must in range 0 ~ 2147483647. Using random seed instead.")
         seed = np.random.randint(0, 2 ** 31 - 1)
-    torch.manual_seed(seed)
+    # torch.manual_seed(seed)
+    seed_everything(seed)
     used_seed = seed
 
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
@@ -1181,17 +1202,20 @@ def infer(
     ema_model = load_custom(model_name, language, password)
     if ema_model is None:
         gr.Warning("模型加载失败")
-        return gr.update(), []
+        infer_running = False
+        return gr.update(), [], used_seed
 
     # 检查用户设置的输入框数量是否正常
     try:
         num_input = int(num_input)
         if num_input <= 0 or num_input > 20:
             gr.Warning("输入框数量设置不对")
-            return gr.update(), []
+            infer_running = False
+            return gr.update(), [], used_seed
     except ValueError:
         gr.Warning("输入框数量无法转换为数字")
-        return gr.update(), []
+        infer_running = False
+        return gr.update(), [], used_seed
 
     # 把所有的输入框的文本都获取出来，汇总到一块，生成时也用总的这个列表，这样方便显示总进度
     # 如果要根据框保存中间结果，那就在生成的过程中判断是第几个框，所以保存每个框里的文本行的数量。
@@ -1208,6 +1232,9 @@ def infer(
                 continue
             if (lang_alone == "泰语" and insert_punct_in_space) or "泰语-sit-男-4" in model_name:
                 gen_text = insert_punct(gen_text)
+                
+            elif "泰语-sit-男-5" in model_name:
+                gen_text = process_thai_repeat(replace_numbers_with_thai(gen_text))
 
             all_gen_text_list.append(gen_text)
             index += 1
@@ -1216,7 +1243,8 @@ def infer(
 
     if len(text_box_text_list) == 0:
         gr.Warning("没有要生成的文本")
-        return gr.update(), []
+        infer_running = False
+        return gr.update(), [], used_seed
 
     # 删除旧的音频文件
     global launch_in_service
@@ -1272,8 +1300,15 @@ def infer(
         enable_svc, model_path, speaker_path = get_svc_model(enable_svc, svc_type, svc_model, lang_alone, password,
                                                              show_info)
         if model_path is None:
-            return gr.update(), []
+            infer_running = False
+            return gr.update(), [], used_seed
 
+    f_version = model_name.rpartition('-')[-1]
+    s_version = svc_model.rpartition('-')[-1]
+    try:
+        f_version = float(f_version)
+    except:
+        f_version = 0.0
     # 开始生成
     generated_waves = []
     svc_waves = []
@@ -1285,21 +1320,49 @@ def infer(
     svc_sampling_rate = 32000
     segm_audio_list = []
     for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
+        if stop_infer:
+            gr.Warning("停止生成")
+            print("停止生成")
+            infer_running = False
+            return gr.update(), [], used_seed
+            
+        if "泰语" in model_name and f_version >= 5.0:
+            final_wave, final_sample_rate, combined_spectrogram = thai_infer_process(
+                ref_audio,
+                ref_text,
+                gen_text,
+                ema_model,
+                vocoder,
+                cross_fade_duration=float(cross_fade_duration),
+                nfe_step=nfe_step,
+                speed=speed,
+                # progress=gr.Progress(),
+                cfg_strength=2,
+                set_max_chars=250,
+                use_ipa= False
+            )
+            
+        else:
+            final_wave, final_sample_rate, combined_spectrogram = infer_process(
+                ref_audio,
+                ref_text.lower(),
+                gen_text.lower(),
+                ema_model,
+                vocoder,
+                cross_fade_duration=cross_fade_duration,
+                nfe_step=nfe_step,
+                speed=speed,
+                show_info=show_info,
+                # progress=gr.Progress(),
+                # lang=lang,
+            )
 
-        final_wave, final_sample_rate, combined_spectrogram = infer_process(
-            ref_audio,
-            ref_text.lower(),
-            gen_text.lower(),
-            ema_model,
-            vocoder,
-            cross_fade_duration=cross_fade_duration,
-            nfe_step=nfe_step,
-            speed=speed,
-            show_info=show_info,
-            # progress=gr.Progress(),
-            # lang=lang,
-        )
-
+        if stop_infer:
+            gr.Warning("停止生成")
+            print("停止生成")
+            infer_running = False
+            return gr.update(), [], used_seed
+            
         generated_waves.append(final_wave)
         spectrograms.append(combined_spectrogram)
 
@@ -1309,7 +1372,7 @@ def infer(
         # 保存中间结果
         if save_line_audio:
             # 按行保存
-            audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{i + 1}.wav"
+            audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{i + 1}.wav"
             sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
             segm_audio_list.append(audio_filepath)
 
@@ -1339,7 +1402,8 @@ def infer(
             # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
             if i == total_box_count - 1:
                 final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
-                audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{cur_box_index}.wav"
+                
+                audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{cur_box_index}.wav"
                 sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
                 segm_audio_list.append(audio_filepath)
 
@@ -1348,10 +1412,17 @@ def infer(
                     total_box_count += text_box_text_list[cur_box_index]
                     cur_box_index += 1
 
+    if stop_infer:
+        gr.Warning("停止生成")
+        print("停止生成")
+        infer_running = False
+        return gr.update(), [], used_seed
+    
     output_audio_list = []
     if enable_svc:
         # 导出合并后的24Khz音频
-        last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        # last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_orgi_audio_path = last_audio_path + f"/orgi_audio-f{f_version}-p{speed}.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
@@ -1359,7 +1430,8 @@ def infer(
             output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
-        last_gen_audio_path = last_audio_path + f"/{svc_model}_{svc_type.lower()}_audio.wav"
+        # last_gen_audio_path = last_audio_path + f"/{svc_model}_{svc_type.lower()}_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/svc_audio-f{f_version}-{svc_type.lower()[0]}{s_version}-p{speed}.wav"
         final_waves = None
         if len(svc_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, svc_waves, svc_sampling_rate)
@@ -1368,7 +1440,8 @@ def infer(
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        # last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/orgi_audio-f{f_version}-p{speed}.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
@@ -1382,6 +1455,7 @@ def infer(
         final_waves = final_waves.squeeze().cpu().numpy()
 
     output_audio_list.extend(segm_audio_list)
+    infer_running = False
     return (final_sample_rate, final_waves), output_audio_list, used_seed
 
 
@@ -1410,7 +1484,7 @@ def load_ref_txt(ref_txt_path):
     return txt
 
 
-with gr.Blocks(title="F5-TTS-SVC_v3") as app:
+with gr.Blocks(title="F5-TTS-SVC_v4") as app:
     gr.Markdown(
         """
 # 自定义 F5 TTS + SVC
@@ -1558,6 +1632,18 @@ F5-TTS + SOVITS + Applio + RVC
             gr.update(interactive=(svc_type == "Applio" or svc_type == "RVC"))
 
 
+    def stop_infer_btn():
+        global stop_infer
+        stop_infer = True
+        
+    # 定义定时调用的异步函数
+    def update_running_status():
+        global infer_running
+        if infer_running:
+            return "TTS服务使用中", gr.update(interactive=False)
+        else:
+            return "TTS服务可用", gr.update(interactive=True)
+
     if len(F5_models_dict) > 0:
         def_lang = list(F5_models_dict.keys())[0]
         (model_names, def_model), def_txt, (ref_audios, def_audio), \
@@ -1565,7 +1651,7 @@ F5-TTS + SOVITS + Applio + RVC
     else:
         model_names = [],
         def_model = "",
-        def_txt = "'",
+        def_txt = "",
         ref_audios = [],
         def_audio = "",
         svc_type_list = [],
@@ -1641,7 +1727,8 @@ F5-TTS + SOVITS + Applio + RVC
                     interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
                     scale=2
                 )
-
+                running_info = gr.Textbox(label="", value="", scale=1)
+               
             # 动态布局区域
             rows = []
             max_per_row = 5
@@ -1661,12 +1748,14 @@ F5-TTS + SOVITS + Applio + RVC
 
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
-            modify_words_input = gr.Textbox(label="改词", lines=10)
-
             with gr.Row():
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载所有输出音频", variant="primary")
+                stop_btn = gr.Button("停止", variant="primary")
+                
+            update_running_status_timer = gr.Timer(1)
+            update_running_status_timer.tick(update_running_status, inputs=None, outputs=[running_info, generate_btn])
 
             with gr.Accordion("高级设置", open=False):
                 basic_ref_text_input = gr.Textbox(
@@ -1675,6 +1764,9 @@ F5-TTS + SOVITS + Applio + RVC
                     lines=2,
                     value=def_txt,
                 )
+
+                modify_words_input = gr.Textbox(label="改词", lines=10)
+
                 with gr.Row():
                     randomize_seed = gr.Checkbox(
                         label="随机种子",
@@ -1770,42 +1862,48 @@ F5-TTS + SOVITS + Applio + RVC
             ):
                 if randomize_seed:
                     seed_input = np.random.randint(0, 2 ** 31 - 1)
+                try:
+                    if len(modify_words) > 0:
+                        gen_texts_input_modify = []
+                        for text in gen_texts_input:
+                            for modify in modify_words.split("\n"):
+                                parts = modify.split("\t")
+                                if len(parts) != 2:
+                                    continue
+                                else:
+                                    text = text.replace(parts[0], parts[1])
+                                    gen_texts_input_modify.append(text)
+                    else:
+                        gen_texts_input_modify = gen_texts_input
 
-                if len(modify_words) > 0:
-                    gen_texts_input_modify = []
-                    for text in gen_texts_input:
-                        for modify in modify_words.split("\n"):
-                            parts = modify.split("\t")
-                            if len(parts) != 2:
-                                continue
-                            else:
-                                text = text.replace(parts[0], parts[1])
-                                gen_texts_input_modify.append(text)
-                else:
-                    gen_texts_input_modify = gen_texts_input
-
-                audio_out, gen_audio_list, used_seed = infer(
-                    ref_audio_input,
-                    ref_text_input,
-                    num_input,
-                    gen_texts_input_modify,
-                    language,
-                    model_name,
-                    password,
-                    remove_silence,
-                    seed=seed_input,
-                    cross_fade_duration=cross_fade_duration_slider,
-                    nfe_step=nfe_slider,
-                    speed=speed_slider,
-                    save_line_audio=save_line_audio,
-                    insert_punct_in_space=insert_punct_in_space,
-                    enable_svc=enable_svc,
-                    svc_type=svc_type,
-                    svc_model=svc_model,
-                    tone_shift=tone_shift,
-                    rvc_index_rate=rvc_index_rate,
-                )
-                return audio_out, gen_audio_list, used_seed
+                    audio_out, gen_audio_list, used_seed = infer(
+                        ref_audio_input,
+                        ref_text_input,
+                        num_input,
+                        gen_texts_input_modify,
+                        language,
+                        model_name,
+                        password,
+                        remove_silence,
+                        seed=seed_input,
+                        cross_fade_duration=cross_fade_duration_slider,
+                        nfe_step=nfe_slider,
+                        speed=speed_slider,
+                        save_line_audio=save_line_audio,
+                        insert_punct_in_space=insert_punct_in_space,
+                        enable_svc=enable_svc,
+                        svc_type=svc_type,
+                        svc_model=svc_model,
+                        tone_shift=tone_shift,
+                        rvc_index_rate=rvc_index_rate,
+                    )
+                    return audio_out, gen_audio_list, used_seed
+                except Exception as e:
+                    traceback.print_exc()  # 打印完整堆栈信息
+                    print(model_name, svc_model)
+                    global infer_running
+                    infer_running = False
+                    return gr.update(), [], 0
 
 
             intputs = [ref_audio,
@@ -1839,6 +1937,10 @@ F5-TTS + SOVITS + Applio + RVC
             clear_box_btn.click(
                 clear_txt_boxs,
                 outputs=textboxes,
+            )
+            
+            stop_btn.click(
+                stop_infer_btn
             )
 
             download_all.click(None, [], [], js="""
