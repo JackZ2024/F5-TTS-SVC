@@ -1901,6 +1901,7 @@ F5-TTS + SOVITS + Applio + RVC
                 except Exception as e:
                     traceback.print_exc()  # 打印完整堆栈信息
                     print(model_name, svc_model)
+                    gr.Warning("音频生成失败，请刷新后重试！")
                     global infer_running
                     infer_running = False
                     return gr.update(), [], 0

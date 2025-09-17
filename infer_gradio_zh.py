@@ -26,6 +26,8 @@ import pathlib
 import wget
 import yaml
 
+import model_manager
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/rvc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/infer")
@@ -482,29 +484,34 @@ def load_rvc_models_list():
 
 
 def load_refs_list():
-    refs_root_path = "./refs"
+    refs_root_path = "refs"
     refs_dict = {}
+    speaker_dict = {}
     if not os.path.exists(refs_root_path):
         # 如果refs文件夹不存在，那就到网盘下载一份，这里需要实现网盘下载refs文件夹的功能。TODO
         return refs_dict
 
     for folder in os.listdir(refs_root_path):
-        folder_path = refs_root_path + "/" + folder
+        folder_path = os.path.join(refs_root_path, folder)
         if os.path.isdir(folder_path):
             language = folder
-
             ref_audio_dict = {}
             for dirpath, dirnames, filenames in os.walk(folder_path):
                 for file in filenames:
                     if file.lower().endswith(".wav") or file.lower().endswith(".mp3"):
-                        ref_audio_path = dirpath + "/" + file
+                        ref_audio_path = os.path.join(dirpath, file)
                         ref_txt_path = ref_audio_path[:-4] + ".txt"
                         if os.path.exists(ref_txt_path):
-                            ref_audio_dict[ref_audio_path.replace("\\", "/")] = ref_txt_path.replace("\\", "/")
-
+                            key = ref_audio_path.replace("\\", "/")
+                            ref_audio_dict[key] = ref_txt_path.replace("\\", "/")
+                            if len(dirpath.split(os.sep)) == 3:  # 为speaker制定了单独的参考
+                                speaker = dirpath.split(os.sep)[-1]
+                                if speaker not in speaker_dict:
+                                    speaker_dict[speaker] = []
+                                if key not in speaker_dict[speaker]:
+                                    speaker_dict[speaker].append(key)
             refs_dict[language] = ref_audio_dict
-
-    return refs_dict
+    return refs_dict, speaker_dict
 
 
 # 组合生成的音频，并在中间根据参数添加静音
@@ -554,7 +561,7 @@ F5_models_dict = load_F5_models_list()
 sovits_models_dict = load_sovits_models_list()
 applio_models_dict = load_applio_models_list()
 rvc_models_dict = load_rvc_models_list()
-refs_dict = load_refs_list()
+refs_dict, speaker_dict = load_refs_list()
 launch_in_service = False
 stop_infer = False
 
@@ -1356,9 +1363,10 @@ def infer(
                     cur_box_index += 1
 
     output_audio_list = []
+    ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
     if enable_svc:
         # 导出合并后的24Khz音频
-        last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_orgi_audio_path = last_audio_path + f"/{model_name}--{ref_basename}-orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
@@ -1375,7 +1383,7 @@ def infer(
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/{model_name}--{ref_basename}-orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
@@ -1430,12 +1438,14 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
     def get_default_params(lang):
         global F5_models_dict
         global refs_dict
+        global speaker_dict
         model_dict_list = F5_models_dict.get(lang, [])
         model_names = []
         for model_dict in model_dict_list:
             model_names.append(model_dict["model_name"])
         def_model = ""
         if len(model_names) > 0:
+            model_names.reverse()
             def_model = model_names[0]
 
         lang_alone = lang
@@ -1446,9 +1456,14 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
         ref_audio_dict = refs_dict.get(lang_alone, {})
         ref_audios = []
         ref_txts = []
-        for key, value in ref_audio_dict.items():
-            ref_audios.append(key)
-            ref_txts.append(value)
+
+        if def_model in speaker_dict:
+            ref_audios = speaker_dict[def_model]
+            ref_txts = [ref_audio_dict[item] for item in ref_audios]
+        else:
+            for key, value in ref_audio_dict.items():
+                ref_audios.append(key)
+                ref_txts.append(value)
         if len(ref_audios) > 0 and os.path.exists(ref_audios[0]):
             def_audio = ref_audios[0]
         else:
@@ -1514,8 +1529,49 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
             gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
 
 
+    def get_speed(model):
+        speed = 0.8
+        if "-s-" in model or model.startswith("s-"):
+            speed = 0.6
+        elif "-d-" in model or model.startswith("d-"):
+            speed = 0.9
+        return speed
+
+
+    def model_change(lang, model_name):
+        ref_audios = []
+        ref_txts = []
+        lang_alone = lang
+        if "-" in lang_alone:
+            index = lang.find("-")
+            lang_alone = lang_alone[:index]
+        ref_audio_dict = refs_dict.get(lang_alone, {})
+
+        if model_name in speaker_dict:
+            ref_audios = speaker_dict[model_name]
+            ref_txts = [ref_audio_dict[item] for item in ref_audios]
+        else:
+            for key, value in ref_audio_dict.items():
+                ref_audios.append(key)
+                ref_txts.append(value)
+
+        if len(ref_audios) > 0 and os.path.exists(ref_audios[0]):
+            def_audio = ref_audios[0]
+        else:
+            def_audio = None
+
+        if len(ref_txts) > 0:
+            def_txt = load_ref_txt(ref_txts[0]).strip()
+        else:
+            def_txt = ""
+
+        return gr.update(value=def_txt), \
+            gr.update(choices=ref_audios, value=def_audio), get_speed(model_name)
+
+
     def ref_audio_change(lang, audio_path):
         global refs_dict
+        global def_txt
         lang_alone = lang
         if "-" in lang_alone:
             index = lang.find("-")
@@ -1569,6 +1625,29 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
     def stop_infer_btn():
         global stop_infer
         stop_infer = True
+
+
+    model_manager = model_manager.WhisperModelManager()
+
+
+    def get_whisper_folder():
+        if os.path.exists("./whisper_models/whisper-medium-zh-ct2"):
+            return "./whisper_models/whisper-medium-zh-ct2"
+        else:
+            return "deepdml/faster-whisper-large-v3-turbo-ct2"
+
+
+    def transcribe_audio(audio):
+        with model_manager.load_model(get_whisper_folder()) as model:
+            segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
+            result = ""
+            for segment in segments:
+                result += segment.text
+            return result
+
+
+    def clear_audio():
+        return def_txt
 
 
     if len(F5_models_dict) > 0:
@@ -1656,12 +1735,23 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 gr.Markdown("如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
                 with gr.Row(equal_height=True):
                     basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
-                    basic_ref_audio_user = gr.Audio(label="用户上传参考音频",sources= ["upload"], type="filepath")
+                    basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
                     basic_ref_text_input = gr.Textbox(
                         label="参考音频对应文本",
-                        info="如果留空则自动转录生成. 如果输入文本，则使用输入的文本，建议输入标准文本，转录出来的文本准确性可能不高。",
                         lines=2,
                         value=def_txt,
+                    )
+
+                    basic_ref_audio_user.upload(
+                        fn=transcribe_audio,
+                        inputs=basic_ref_audio_user,
+                        outputs=basic_ref_text_input
+                    )
+
+                    basic_ref_audio_user.clear(
+                        fn=clear_audio,
+                        inputs=None,
+                        outputs=basic_ref_text_input
                     )
                 modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
                 with gr.Row(visible=False):
@@ -1696,7 +1786,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     label="语速设置",
                     minimum=0.3,
                     maximum=2.0,
-                    value=0.9,
+                    value=get_speed(def_model),
                     step=0.1,
                     info="调整音频语速",
                 )
@@ -1727,7 +1817,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     remove_silence = gr.Checkbox(
                         label="删除静音",
                         info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
-                        value=False,
+                        value=True,
                     )
                     save_line_audio = gr.Checkbox(
                         label="按行保存音频",
@@ -1749,6 +1839,10 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio, svc_type, svc_model, rvc_index_rate_slider],
                 show_progress="hidden",
             )
+
+            custom_ckpt_path.change(model_change, inputs=[language, custom_ckpt_path],
+                                    outputs=[basic_ref_text_input, ref_audio, speed_slider])
+
             ref_audio.change(
                 ref_audio_change,
                 inputs=[language, ref_audio],
