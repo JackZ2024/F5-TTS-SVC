@@ -22,6 +22,7 @@ import gdown
 import csv
 import py7zr
 import pathlib
+import gc
 
 import wget
 import yaml
@@ -64,8 +65,8 @@ from infer.modules.vc.modules import VC
 rvc_config = Config()
 rvc_vc = VC(rvc_config)
 
-cur_rvc_model_path = ""
-custom_ema_model, pre_custom_path = None, ""
+# cur_rvc_model_path = ""
+# custom_ema_model, pre_custom_path = None, ""
 
 # load models
 
@@ -144,10 +145,10 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding=False,
                              conv_layers=4, pe_attn_head=1)
 
-    global pre_custom_path, custom_ema_model
-    if pre_custom_path != ckpt_path or custom_ema_model is None:
-        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
-        pre_custom_path = ckpt_path
+    # global pre_custom_path, custom_ema_model
+    # if pre_custom_path != ckpt_path or custom_ema_model is None:
+    custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
+    # pre_custom_path = ckpt_path
 
     return custom_ema_model
 
@@ -1159,7 +1160,7 @@ def infer(
         show_info=gr.Info,
         save_line_audio=False,
         insert_punct_in_space=False,
-        enable_svc=True,
+        enable_svc=False,
         svc_type="",
         svc_model="",
         tone_shift=0,
@@ -1921,6 +1922,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     tone_shift=tone_shift,
                     rvc_index_rate=rvc_index_rate,
                 )
+                gc.collect()
                 return audio_out, gen_audio_list, used_seed
 
 

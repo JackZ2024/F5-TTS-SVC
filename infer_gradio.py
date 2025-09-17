@@ -23,6 +23,7 @@ import gdown
 import csv
 import py7zr
 import pathlib
+import gc
 
 import wget
 import yaml
@@ -67,7 +68,8 @@ from infer.configs.config import Config
 from infer.modules.vc.modules import VC
 
 rvc_config = Config()
-rvc_vc = VC(rvc_config)
+# rvc_vc = VC(rvc_config)
+rvc_vc = None
 
 cur_rvc_model_path = ""
 custom_ema_model, pre_custom_path = None, ""
@@ -151,6 +153,10 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
 
     global pre_custom_path, custom_ema_model
     if pre_custom_path != ckpt_path or custom_ema_model is None:
+        if custom_ema_model is not None:
+            del custom_ema_model
+            gc.collect()
+
         custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
         pre_custom_path = ckpt_path
 
@@ -1008,7 +1014,12 @@ def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pi
         download_rvc_models()
 
     # 如果模型已经加载过了，就不再重复加载
-    global cur_rvc_model_path
+    global cur_rvc_model_path, rvc_vc, rvc_config
+
+    if rvc_vc is None:
+        rvc_vc = VC(rvc_config)
+        cur_rvc_model_path = ""
+
     if cur_rvc_model_path != model_path:
         rvc_vc.get_vc(model_path, 0.33)
         cur_rvc_model_path = model_path
@@ -1319,99 +1330,114 @@ def infer(
     total_box_count = text_box_text_list[0]
     svc_sampling_rate = 32000
     segm_audio_list = []
-    for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
-        if stop_infer:
-            gr.Warning("停止生成")
-            print("停止生成")
-            infer_running = False
-            return gr.update(), [], used_seed
-            
-        if "泰语" in model_name and f_version >= 5.0:
-            final_wave, final_sample_rate, combined_spectrogram = thai_infer_process(
-                ref_audio,
-                ref_text,
-                gen_text,
-                ema_model,
-                vocoder,
-                cross_fade_duration=float(cross_fade_duration),
-                nfe_step=nfe_step,
-                speed=speed,
-                # progress=gr.Progress(),
-                cfg_strength=2,
-                set_max_chars=250,
-                use_ipa= False
-            )
-            
-        else:
-            final_wave, final_sample_rate, combined_spectrogram = infer_process(
-                ref_audio,
-                ref_text.lower(),
-                gen_text.lower(),
-                ema_model,
-                vocoder,
-                cross_fade_duration=cross_fade_duration,
-                nfe_step=nfe_step,
-                speed=speed,
-                show_info=show_info,
-                # progress=gr.Progress(),
-                # lang=lang,
-            )
-
-        if stop_infer:
-            gr.Warning("停止生成")
-            print("停止生成")
-            infer_running = False
-            return gr.update(), [], used_seed
-            
-        generated_waves.append(final_wave)
-        spectrograms.append(combined_spectrogram)
-
-        # 把音频转换改为一句一转换，也就是每生成一句音频，就需要在本地保存一下，并进行转换
-        audio_filepath = tmp_audio_path + f"/tmp_audio_{i + 1}.wav"
-
-        # 保存中间结果
-        if save_line_audio:
-            # 按行保存
-            audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{i + 1}.wav"
-            sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
-            segm_audio_list.append(audio_filepath)
-
-        if enable_svc:
-            if not os.path.exists(audio_filepath):
-                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
-            if svc_type == "Sovits":
-                sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
-                svc_waves.append(audio_wave)
-                svc_sampling_rate = sampling_rate
-            elif svc_type == "Applio":
-                sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path,
-                                                                 rvc_index_rate, tone_shift, False)
-                if audio_wave is not None:
-                    svc_waves.append(audio_wave)
-                    svc_sampling_rate = sampling_rate
-            elif svc_type == "RVC":
-                sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
-                                                              tone_shift, False)
-                if audio_wave is not None:
-                    svc_waves.append(audio_wave)
-                    svc_sampling_rate = sampling_rate
-                else:
-                    print("转换失败-----")
-
-        if not save_line_audio:
-            # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
-            if i == total_box_count - 1:
-                final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
+    try:
+        for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
+            if stop_infer:
+                break
+                # gr.Warning("停止生成")
+                # print("停止生成")
+                # infer_running = False
+                # return gr.update(), [], used_seed
                 
-                audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{cur_box_index}.wav"
-                sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
+            if "泰语" in model_name and f_version >= 5.0:
+                final_wave, final_sample_rate, combined_spectrogram = thai_infer_process(
+                    ref_audio,
+                    ref_text,
+                    gen_text,
+                    ema_model,
+                    vocoder,
+                    cross_fade_duration=float(cross_fade_duration),
+                    nfe_step=nfe_step,
+                    speed=speed,
+                    # progress=gr.Progress(),
+                    cfg_strength=2,
+                    set_max_chars=250,
+                    use_ipa= False
+                )
+                
+            else:
+                final_wave, final_sample_rate, combined_spectrogram = infer_process(
+                    ref_audio,
+                    ref_text.lower(),
+                    gen_text.lower(),
+                    ema_model,
+                    vocoder,
+                    cross_fade_duration=cross_fade_duration,
+                    nfe_step=nfe_step,
+                    speed=speed,
+                    show_info=show_info,
+                    # progress=gr.Progress(),
+                    # lang=lang,
+                )
+
+            if stop_infer:
+                break
+                # gr.Warning("停止生成")
+                # print("停止生成")
+                # infer_running = False
+                # return gr.update(), [], used_seed
+                
+            generated_waves.append(final_wave)
+            spectrograms.append(combined_spectrogram)
+
+            # 把音频转换改为一句一转换，也就是每生成一句音频，就需要在本地保存一下，并进行转换
+            audio_filepath = tmp_audio_path + f"/tmp_audio_{i + 1}.wav"
+
+            # 保存中间结果
+            if save_line_audio:
+                # 按行保存
+                audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{i + 1}.wav"
+                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
                 segm_audio_list.append(audio_filepath)
 
-                if cur_box_index < len(text_box_text_list):
-                    start_pos = total_box_count
-                    total_box_count += text_box_text_list[cur_box_index]
-                    cur_box_index += 1
+            if enable_svc:
+                if not os.path.exists(audio_filepath):
+                    sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
+                if svc_type == "Sovits":
+                    sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
+                    svc_waves.append(audio_wave)
+                    svc_sampling_rate = sampling_rate
+                elif svc_type == "Applio":
+                    sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path,
+                                                                    rvc_index_rate, tone_shift, False)
+                    if audio_wave is not None:
+                        svc_waves.append(audio_wave)
+                        svc_sampling_rate = sampling_rate
+                elif svc_type == "RVC":
+                    sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
+                                                                tone_shift, False)
+                    if audio_wave is not None:
+                        svc_waves.append(audio_wave)
+                        svc_sampling_rate = sampling_rate
+                    else:
+                        print("转换失败-----")
 
+            if not save_line_audio:
+                # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
+                if i == total_box_count - 1:
+                    final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
+                    
+                    audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{cur_box_index}.wav"
+                    sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
+                    segm_audio_list.append(audio_filepath)
+
+                    if cur_box_index < len(text_box_text_list):
+                        start_pos = total_box_count
+                        total_box_count += text_box_text_list[cur_box_index]
+                        cur_box_index += 1
+
+    except:
+        gr.Warning("生成失败，请刷新后重试！")
+        print("生成失败，请刷新后重试！")
+        infer_running = False
+        return gr.update(), [], used_seed
+    finally:
+        global rvc_vc, cur_rvc_model_path
+        if rvc_vc is not None:
+            del rvc_vc
+            rvc_vc = None
+            cur_rvc_model_path = ""
+    
     if stop_infer:
         gr.Warning("停止生成")
         print("停止生成")
@@ -1897,6 +1923,7 @@ F5-TTS + SOVITS + Applio + RVC
                         tone_shift=tone_shift,
                         rvc_index_rate=rvc_index_rate,
                     )
+                    gc.collect()
                     return audio_out, gen_audio_list, used_seed
                 except Exception as e:
                     traceback.print_exc()  # 打印完整堆栈信息
@@ -1904,6 +1931,7 @@ F5-TTS + SOVITS + Applio + RVC
                     gr.Warning("音频生成失败，请刷新后重试！")
                     global infer_running
                     infer_running = False
+                    gc.collect()
                     return gr.update(), [], 0
 
 
