@@ -1,45 +1,43 @@
 # ruff: noqa: E402
 # Above allows ruff to ignore E402: module level import not at top of file
 
-import re
-import tempfile
-
+import csv
 import os
+import pathlib
+import re
 import shutil
-import sys
-import time
-import threading
 import string
+import sys
+import tempfile
+import threading
+import time
 import zipfile
 
 import click
+import gdown
 import gradio as gr
 import numpy as np
+import py7zr
 import soundfile as sf
 import torch
 import torchaudio
-import gdown
-import csv
-import py7zr
-import pathlib
-
 import wget
 import yaml
 
 import model_manager
+from f5_tts.model.utils import convert_zh_mix_char_to_pinyin
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/rvc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/infer")
 
-from f5_tts.model import DiT, UNetT
+from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
     load_model,
     preprocess_ref_audio_text,
     infer_process,
     remove_silence_for_generated_wav,
-    save_spectrogram,
 )
 
 # sovits
@@ -1058,21 +1056,21 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
         if svc_type == "Sovits":
             sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
             converted_filepath = convert_audio_path + f"/{file_name}_sovits_{tone_shift}.wav"
-            sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
+            sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
             svc_files.append(converted_filepath)
         elif svc_type == "Applio":
             sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                              tone_shift)
             if audio_wave is not None:
                 converted_filepath = convert_audio_path + f"/{file_name}_applio_{tone_shift}_{rvc_index_rate}.wav"
-                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
+                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
                 svc_files.append(converted_filepath)
         elif svc_type == "RVC":
             sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                           tone_shift, True)
             if audio_wave is not None:
                 converted_filepath = convert_audio_path + f"/{file_name}_rvc_{tone_shift}_{rvc_index_rate}.wav"
-                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
+                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
                 svc_files.append(converted_filepath)
 
     return svc_files
@@ -1156,7 +1154,7 @@ def infer(
         cross_fade_duration=0.15,
         nfe_step=32,
         speed=1,
-        show_info=gr.Info,
+        show_info=print,
         save_line_audio=False,
         insert_punct_in_space=False,
         enable_svc=True,
@@ -1324,12 +1322,12 @@ def infer(
         if save_line_audio:
             # 按行保存
             audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{i + 1}.wav"
-            sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
+            sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_32')
             segm_audio_list.append(audio_filepath)
 
         if enable_svc:
             if not os.path.exists(audio_filepath):
-                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
+                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_32')
             if svc_type == "Sovits":
                 sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
                 svc_waves.append(audio_wave)
@@ -1354,7 +1352,7 @@ def infer(
             if i == total_box_count - 1:
                 final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
                 audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{cur_box_index}.wav"
-                sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
+                sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_32')
                 segm_audio_list.append(audio_filepath)
 
                 if cur_box_index < len(text_box_text_list):
@@ -1369,7 +1367,7 @@ def infer(
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
-            sf.write(last_orgi_audio_path, final_waves, final_sample_rate, 'PCM_24')
+            sf.write(last_orgi_audio_path, final_waves, final_sample_rate, 'PCM_32')
             output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
@@ -1377,7 +1375,7 @@ def infer(
         final_waves = None
         if len(svc_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, svc_waves, svc_sampling_rate)
-            sf.write(last_gen_audio_path, final_waves, svc_sampling_rate, 'PCM_24')
+            sf.write(last_gen_audio_path, final_waves, svc_sampling_rate, 'PCM_32')
             final_sample_rate = svc_sampling_rate
             output_audio_list.append(last_gen_audio_path)
     else:
@@ -1386,7 +1384,7 @@ def infer(
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
-            sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_24')
+            sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_32')
             output_audio_list.append(last_gen_audio_path)
 
     # Remove silence
@@ -1394,8 +1392,7 @@ def infer(
         remove_silence_for_generated_wav(last_gen_audio_path)
         final_waves, _ = torchaudio.load(last_gen_audio_path)
         final_waves = final_waves.squeeze().cpu().numpy()
-
-    output_audio_list.extend(segm_audio_list)
+    # output_audio_list.extend(segm_audio_list)
     return (final_sample_rate, final_waves), output_audio_list, used_seed
 
 
@@ -1422,6 +1419,10 @@ def load_ref_txt(ref_txt_path):
         with open(ref_txt_path, "r", encoding="utf8") as f:
             txt = f.read()
     return txt
+
+
+def get_pinyin(*input_texts):
+    return convert_zh_mix_char_to_pinyin([input_texts[0]])[0]
 
 
 with gr.Blocks(title="F5-TTS-SVC_v3") as app:
@@ -1716,18 +1717,21 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     for j in range(max_per_row):
                         index = i * max_per_row + j
                         if index == 0:
-                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=True)
+                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=True)
+                            with gr.Column():
+                                pinyin_textbox = gr.Textbox(label="拼音")
+                                pinyin_button = gr.Button("查看拼音")
                         else:
-                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=False)
+                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
                         textboxes.append(textbox)
                     rows.append(row)
-
+            pinyin_button.click(get_pinyin, inputs=textboxes, outputs=pinyin_textbox)
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
             with gr.Row():
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
                 generate_btn = gr.Button("合成", variant="primary")
-                download_all = gr.Button("下载所有输出音频", variant="primary")
+                download_all = gr.Button("下载音频", variant="primary")
                 stop_btn = gr.Button("Stop", variant="primary")
 
             with gr.Accordion("高级设置", open=False):
@@ -1816,7 +1820,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     remove_silence = gr.Checkbox(
                         label="删除静音",
                         info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
-                        value=True,
+                        value=False,
                     )
                     save_line_audio = gr.Checkbox(
                         label="按行保存音频",
@@ -1829,7 +1833,9 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                         value=False,
                         visible=False
                     )
-            audio_output = gr.Audio(label="合成音频")
+            audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True, waveform_options={
+                "sample_rate": 24000
+            })
             download_output = gr.File(label="下载文件", file_count="multiple")
 
             language.change(
@@ -1883,7 +1889,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 if randomize_seed:
                     seed_input = np.random.randint(0, 2 ** 31 - 1)
 
-                if len(modify_words) > 0:
+                if modify_words and len(modify_words) > 0:
                     gen_texts_input_modify = []
                     for text in gen_texts_input:
                         for modify in modify_words.split("\n"):
