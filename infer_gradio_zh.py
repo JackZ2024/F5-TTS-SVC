@@ -26,6 +26,7 @@ import yaml
 
 import model_manager
 from f5_tts.model.utils import convert_zh_mix_char_to_pinyin
+from utils import auto_pause_by_whisper
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/rvc")
@@ -1150,6 +1151,8 @@ def infer(
         model_name,
         password,
         remove_silence,
+        auto_pause,
+        pause_rules,
         seed,
         cross_fade_duration=0.15,
         nfe_step=32,
@@ -1387,11 +1390,20 @@ def infer(
             sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_32')
             output_audio_list.append(last_gen_audio_path)
 
+    if auto_pause:
+        with model_manager.load_model() as model:
+            last_gen_audio_path = auto_pause_by_whisper(model, last_gen_audio_path, "".join(all_gen_text_list),
+                                                        pause_rules)
+            output_audio_list.append(last_gen_audio_path)
+            final_waves, _ = torchaudio.load(last_gen_audio_path)
+            final_waves = final_waves.squeeze().cpu().numpy()
+
     # Remove silence
     if remove_silence and os.path.exists(last_gen_audio_path):
         remove_silence_for_generated_wav(last_gen_audio_path)
         final_waves, _ = torchaudio.load(last_gen_audio_path)
         final_waves = final_waves.squeeze().cpu().numpy()
+    print("output_audio_list", output_audio_list)
     # output_audio_list.extend(segm_audio_list)
     return (final_sample_rate, final_waves), output_audio_list, used_seed
 
@@ -1630,15 +1642,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
     model_manager = model_manager.WhisperModelManager()
 
 
-    def get_whisper_folder():
-        if os.path.exists("./whisper_models/whisper-medium-zh-ct2"):
-            return "./whisper_models/whisper-medium-zh-ct2"
-        else:
-            return "deepdml/faster-whisper-large-v3-turbo-ct2"
-
-
     def transcribe_audio(audio):
-        with model_manager.load_model(get_whisper_folder()) as model:
+        with model_manager.load_model() as model:
             segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
             result = ""
             for segment in segments:
@@ -1833,6 +1838,23 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                         value=False,
                         visible=False
                     )
+                with gr.Row():
+                    cb_auto_pause = gr.Checkbox(
+                        label="标点自动间距",
+                        value=False
+                    )
+                    number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
+                    number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
+                    number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
+                    number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
+                    number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
+                    cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
+                    number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
+                    number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
+                    number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
+                    number_exclamation.change(None, number_exclamation, None, js="(v)=>{ setStorage('exclamation_pause',v) }")
+                    number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
+
             audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True, waveform_options={
                 "sample_rate": 24000
             })
@@ -1884,6 +1906,12 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     rvc_index_rate,
                     num_input,
                     modify_words,
+                    auto_pause,
+                    num_comma,
+                    num_period,
+                    num_question,
+                    num_exclamation,
+                    num_semicolon,
                     *gen_texts_input,
             ):
                 if randomize_seed:
@@ -1914,6 +1942,14 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     model_name,
                     password,
                     remove_silence,
+                    auto_pause,
+                    pause_rules={
+                        '，': num_comma,
+                        '。': num_period,
+                        '？': num_question,
+                        '！': num_exclamation,
+                        '；': num_semicolon
+                    },
                     seed=seed_input,
                     cross_fade_duration=cross_fade_duration_slider,
                     nfe_step=nfe_slider,
@@ -1949,7 +1985,13 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                        tone_shift_slider,
                        rvc_index_rate_slider,
                        num_input,
-                       modify_words_input
+                       modify_words_input,
+                       cb_auto_pause,
+                       number_comma,
+                       number_period,
+                       number_question,
+                       number_exclamation,
+                       number_semicolon
                        ] + textboxes
 
             generate_btn.click(
@@ -2175,14 +2217,22 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                    						       globalThis.getStorage = (key, value)=>{
                    						        return JSON.parse(localStorage.getItem(key))
                    						      }
+                   						      
                    						       var modifyWords = getStorage('modifyWords')
-                   						       return [modifyWords];
+                   						       const auto_pause = getStorage('auto_pause') || 'false'
+                   						       const comma_pause = getStorage('comma_pause') || '1.0'
+                   						       const period_pause = getStorage('period_pause') || '2.0'
+                   						       const question_pause = getStorage('question_pause') || '3.0'
+                   						       const exclamation_pause = getStorage('exclamation_pause') || '3.0'
+                   						       const semicolon_pause = getStorage('semicolon_pause') || '3.0'
+                   						       return [modifyWords, auto_pause, comma_pause, period_pause, question_pause, exclamation_pause, semicolon_pause];
                    						      }
                    						    """
         app.load(
             None,
             inputs=None,
-            outputs=[modify_words_input],
+            outputs=[modify_words_input, cb_auto_pause, number_comma, number_period, number_question,
+                     number_exclamation, number_semicolon],
             js=js_get_local_storage,
         )
 
