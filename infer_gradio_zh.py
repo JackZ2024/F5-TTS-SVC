@@ -1644,7 +1644,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
 
     def transcribe_audio(audio):
         with model_manager.load_model() as model:
-            segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
+            segments, _ = model.transcribe_original(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
             result = ""
             for segment in segments:
                 result += segment.text
