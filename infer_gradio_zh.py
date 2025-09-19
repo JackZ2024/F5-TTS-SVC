@@ -1825,7 +1825,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     remove_silence = gr.Checkbox(
                         label="删除静音",
                         info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
-                        value=False,
+                        value=True,
                     )
                     save_line_audio = gr.Checkbox(
                         label="按行保存音频",
