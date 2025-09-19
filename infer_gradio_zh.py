@@ -1944,11 +1944,11 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     remove_silence,
                     auto_pause,
                     pause_rules={
-                        '，': num_comma,
-                        '。': num_period,
-                        '？': num_question,
-                        '！': num_exclamation,
-                        '；': num_semicolon
+                        '，': float(num_comma),
+                        '。': float(num_period),
+                        '？': float(num_question),
+                        '！': float(num_exclamation),
+                        '；': float(num_semicolon)
                     },
                     seed=seed_input,
                     cross_fade_duration=cross_fade_duration_slider,
