@@ -133,8 +133,11 @@ def auto_pause_by_whisper(model, audio_file, reference_text, pause_rules):
     processed_positions = []  # 记录处理过的位置，用于调试
 
     for i, word in enumerate(words):
+        if i == len(words) - 1:  # 最后一个词不用加间距
+            break
         start_ms = int(word.start * 1000)
-        end_ms = int(word.end * 1000)
+        # 词尾要留出一些尾息
+        end_ms = int((word.end + 0.2 * (words[i + 1].start - word.end))  * 1000)
 
         # 添加从上一个结束位置到当前词开始的音频
         if start_ms > prev_end:
