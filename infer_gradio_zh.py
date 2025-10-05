@@ -1550,7 +1550,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
         return speed
 
 
-    def model_change(lang, model_name):
+    def model_change(lang, model_name, ref_audio_user, orig_ref_text):
         ref_audios = []
         ref_txts = []
         lang_alone = lang
@@ -1572,16 +1572,19 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
         else:
             def_audio = None
 
-        if len(ref_txts) > 0:
-            def_txt = load_ref_txt(ref_txts[0]).strip()
+        if ref_audio_user:
+            def_txt = orig_ref_text
         else:
-            def_txt = ""
+            if len(ref_txts) > 0:
+                def_txt = load_ref_txt(ref_txts[0]).strip()
+            else:
+                def_txt = ""
 
         return gr.update(value=def_txt), \
             gr.update(choices=ref_audios, value=def_audio), get_speed(model_name)
 
 
-    def ref_audio_change(lang, audio_path):
+    def ref_audio_change(lang, audio_path, ref_audio_user, orig_ref_text):
         global refs_dict
         global def_txt
         lang_alone = lang
@@ -1597,6 +1600,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 def_audio = key
                 def_txt = load_ref_txt(value).strip()
                 break
+        if ref_audio_user:
+            def_txt = orig_ref_text
 
         return gr.update(value=def_audio), gr.update(value=def_txt)
 
@@ -1740,7 +1745,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 stop_btn = gr.Button("Stop", variant="primary")
 
             with gr.Accordion("高级设置", open=False):
-                gr.Markdown("如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
+                gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
                 with gr.Row(equal_height=True):
                     basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
                     basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
@@ -1867,12 +1872,12 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 show_progress="hidden",
             )
 
-            custom_ckpt_path.change(model_change, inputs=[language, custom_ckpt_path],
+            custom_ckpt_path.change(model_change, inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
                                     outputs=[basic_ref_text_input, ref_audio, speed_slider])
 
             ref_audio.change(
                 ref_audio_change,
-                inputs=[language, ref_audio],
+                inputs=[language, ref_audio, basic_ref_audio_user, basic_ref_text_input],
                 outputs=[basic_ref_audio_preset, basic_ref_text_input],
                 show_progress="hidden",
             )
@@ -2219,7 +2224,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                    						      }
                    						      
                    						       var modifyWords = getStorage('modifyWords')
-                   						       const auto_pause = getStorage('auto_pause') || 'false'
+                   						       const auto_pause = getStorage('auto_pause')
                    						       const comma_pause = getStorage('comma_pause') || '1.0'
                    						       const period_pause = getStorage('period_pause') || '2.0'
                    						       const question_pause = getStorage('question_pause') || '3.0'
