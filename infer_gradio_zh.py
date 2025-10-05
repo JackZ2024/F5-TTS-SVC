@@ -1390,13 +1390,13 @@ def infer(
             sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_32')
             output_audio_list.append(last_gen_audio_path)
 
-    if auto_pause:
-        with model_manager.load_model() as model:
-            last_gen_audio_path = auto_pause_by_whisper(model, last_gen_audio_path, "".join(all_gen_text_list),
-                                                        pause_rules)
-            output_audio_list.append(last_gen_audio_path)
-            final_waves, _ = torchaudio.load(last_gen_audio_path)
-            final_waves = final_waves.squeeze().cpu().numpy()
+    # if auto_pause:
+    #     with model_manager.load_model() as model:
+    #         last_gen_audio_path = auto_pause_by_whisper(model, last_gen_audio_path, "".join(all_gen_text_list),
+    #                                                     pause_rules)
+    #         output_audio_list.append(last_gen_audio_path)
+    #         final_waves, _ = torchaudio.load(last_gen_audio_path)
+    #         final_waves = final_waves.squeeze().cpu().numpy()
 
     # Remove silence
     if remove_silence and os.path.exists(last_gen_audio_path):
@@ -1843,7 +1843,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                         value=False,
                         visible=False
                     )
-                with gr.Row():
+                with gr.Row(visible=False):
                     cb_auto_pause = gr.Checkbox(
                         label="标点自动间距",
                         value=False
