@@ -1,46 +1,44 @@
 # ruff: noqa: E402
 # Above allows ruff to ignore E402: module level import not at top of file
 
-import re
-import tempfile
-
+import csv
 import os
+import pathlib
+import re
 import shutil
-import sys
-import time
-import threading
 import string
+import sys
+import tempfile
+import threading
+import time
 import zipfile
 
 import click
+import gdown
 import gradio as gr
 import numpy as np
+import py7zr
 import soundfile as sf
 import torch
 import torchaudio
-import gdown
-import csv
-import py7zr
-import pathlib
-import gc
-
 import wget
 import yaml
 
 import model_manager
+from f5_tts.model.utils import convert_zh_mix_char_to_pinyin
+from utils import auto_pause_by_whisper
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/rvc")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/infer")
 
-from f5_tts.model import DiT, UNetT
+from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
     load_model,
     preprocess_ref_audio_text,
     infer_process,
     remove_silence_for_generated_wav,
-    save_spectrogram,
 )
 
 # sovits
@@ -65,8 +63,8 @@ from infer.modules.vc.modules import VC
 rvc_config = Config()
 rvc_vc = VC(rvc_config)
 
-# cur_rvc_model_path = ""
-# custom_ema_model, pre_custom_path = None, ""
+cur_rvc_model_path = ""
+custom_ema_model, pre_custom_path = None, ""
 
 # load models
 
@@ -145,10 +143,10 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding=False,
                              conv_layers=4, pe_attn_head=1)
 
-    # global pre_custom_path, custom_ema_model
-    # if pre_custom_path != ckpt_path or custom_ema_model is None:
-    custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
-    # pre_custom_path = ckpt_path
+    global pre_custom_path, custom_ema_model
+    if pre_custom_path != ckpt_path or custom_ema_model is None:
+        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
+        pre_custom_path = ckpt_path
 
     return custom_ema_model
 
@@ -1059,21 +1057,21 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
         if svc_type == "Sovits":
             sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
             converted_filepath = convert_audio_path + f"/{file_name}_sovits_{tone_shift}.wav"
-            sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
+            sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
             svc_files.append(converted_filepath)
         elif svc_type == "Applio":
             sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                              tone_shift)
             if audio_wave is not None:
                 converted_filepath = convert_audio_path + f"/{file_name}_applio_{tone_shift}_{rvc_index_rate}.wav"
-                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
+                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
                 svc_files.append(converted_filepath)
         elif svc_type == "RVC":
             sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                           tone_shift, True)
             if audio_wave is not None:
                 converted_filepath = convert_audio_path + f"/{file_name}_rvc_{tone_shift}_{rvc_index_rate}.wav"
-                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
+                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
                 svc_files.append(converted_filepath)
 
     return svc_files
@@ -1153,14 +1151,16 @@ def infer(
         model_name,
         password,
         remove_silence,
+        auto_pause,
+        pause_rules,
         seed,
         cross_fade_duration=0.15,
         nfe_step=32,
         speed=1,
-        show_info=gr.Info,
+        show_info=print,
         save_line_audio=False,
         insert_punct_in_space=False,
-        enable_svc=False,
+        enable_svc=True,
         svc_type="",
         svc_model="",
         tone_shift=0,
@@ -1325,12 +1325,12 @@ def infer(
         if save_line_audio:
             # 按行保存
             audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{i + 1}.wav"
-            sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
+            sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_32')
             segm_audio_list.append(audio_filepath)
 
         if enable_svc:
             if not os.path.exists(audio_filepath):
-                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_24')
+                sf.write(audio_filepath, final_wave, final_sample_rate, 'PCM_32')
             if svc_type == "Sovits":
                 sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
                 svc_waves.append(audio_wave)
@@ -1355,7 +1355,7 @@ def infer(
             if i == total_box_count - 1:
                 final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
                 audio_filepath = gen_audio_path + f"/{model_name}_segm_audio_{cur_box_index}.wav"
-                sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
+                sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_32')
                 segm_audio_list.append(audio_filepath)
 
                 if cur_box_index < len(text_box_text_list):
@@ -1363,7 +1363,6 @@ def infer(
                     total_box_count += text_box_text_list[cur_box_index]
                     cur_box_index += 1
 
-    del ema_model
     output_audio_list = []
     ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
     if enable_svc:
@@ -1372,7 +1371,7 @@ def infer(
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
-            sf.write(last_orgi_audio_path, final_waves, final_sample_rate, 'PCM_24')
+            sf.write(last_orgi_audio_path, final_waves, final_sample_rate, 'PCM_32')
             output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
@@ -1380,7 +1379,7 @@ def infer(
         final_waves = None
         if len(svc_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, svc_waves, svc_sampling_rate)
-            sf.write(last_gen_audio_path, final_waves, svc_sampling_rate, 'PCM_24')
+            sf.write(last_gen_audio_path, final_waves, svc_sampling_rate, 'PCM_32')
             final_sample_rate = svc_sampling_rate
             output_audio_list.append(last_gen_audio_path)
     else:
@@ -1389,16 +1388,24 @@ def infer(
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
-            sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_24')
+            sf.write(last_gen_audio_path, final_waves, final_sample_rate, 'PCM_32')
             output_audio_list.append(last_gen_audio_path)
+
+    # if auto_pause:
+    #     with model_manager.load_model() as model:
+    #         last_gen_audio_path = auto_pause_by_whisper(model, last_gen_audio_path, "".join(all_gen_text_list),
+    #                                                     pause_rules)
+    #         output_audio_list.append(last_gen_audio_path)
+    #         final_waves, _ = torchaudio.load(last_gen_audio_path)
+    #         final_waves = final_waves.squeeze().cpu().numpy()
 
     # Remove silence
     if remove_silence and os.path.exists(last_gen_audio_path):
         remove_silence_for_generated_wav(last_gen_audio_path)
         final_waves, _ = torchaudio.load(last_gen_audio_path)
         final_waves = final_waves.squeeze().cpu().numpy()
-
-    output_audio_list.extend(segm_audio_list)
+    print("output_audio_list", output_audio_list)
+    # output_audio_list.extend(segm_audio_list)
     return (final_sample_rate, final_waves), output_audio_list, used_seed
 
 
@@ -1425,6 +1432,10 @@ def load_ref_txt(ref_txt_path):
         with open(ref_txt_path, "r", encoding="utf8") as f:
             txt = f.read()
     return txt
+
+
+def get_pinyin(*input_texts):
+    return convert_zh_mix_char_to_pinyin([input_texts[0]])[0]
 
 
 with gr.Blocks(title="F5-TTS-SVC_v3") as app:
@@ -1540,7 +1551,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
         return speed
 
 
-    def model_change(lang, model_name):
+    def model_change(lang, model_name, ref_audio_user, orig_ref_text):
         ref_audios = []
         ref_txts = []
         lang_alone = lang
@@ -1562,16 +1573,19 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
         else:
             def_audio = None
 
-        if len(ref_txts) > 0:
-            def_txt = load_ref_txt(ref_txts[0]).strip()
+        if ref_audio_user:
+            def_txt = orig_ref_text
         else:
-            def_txt = ""
+            if len(ref_txts) > 0:
+                def_txt = load_ref_txt(ref_txts[0]).strip()
+            else:
+                def_txt = ""
 
         return gr.update(value=def_txt), \
             gr.update(choices=ref_audios, value=def_audio), get_speed(model_name)
 
 
-    def ref_audio_change(lang, audio_path):
+    def ref_audio_change(lang, audio_path, ref_audio_user, orig_ref_text):
         global refs_dict
         global def_txt
         lang_alone = lang
@@ -1587,6 +1601,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 def_audio = key
                 def_txt = load_ref_txt(value).strip()
                 break
+        if ref_audio_user:
+            def_txt = orig_ref_text
 
         return gr.update(value=def_audio), gr.update(value=def_txt)
 
@@ -1632,16 +1648,9 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
     model_manager = model_manager.WhisperModelManager()
 
 
-    def get_whisper_folder():
-        if os.path.exists("./whisper_models/whisper-medium-zh-ct2"):
-            return "./whisper_models/whisper-medium-zh-ct2"
-        else:
-            return "deepdml/faster-whisper-large-v3-turbo-ct2"
-
-
     def transcribe_audio(audio):
-        with model_manager.load_model(get_whisper_folder()) as model:
-            segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
+        with model_manager.load_model() as model:
+            segments, _ = model.transcribe_original(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
             result = ""
             for segment in segments:
                 result += segment.text
@@ -1719,22 +1728,25 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     for j in range(max_per_row):
                         index = i * max_per_row + j
                         if index == 0:
-                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=True)
+                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=True)
+                            with gr.Column():
+                                pinyin_textbox = gr.Textbox(label="拼音")
+                                pinyin_button = gr.Button("查看拼音")
                         else:
-                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=False)
+                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
                         textboxes.append(textbox)
                     rows.append(row)
-
+            pinyin_button.click(get_pinyin, inputs=textboxes, outputs=pinyin_textbox)
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
             with gr.Row():
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
                 generate_btn = gr.Button("合成", variant="primary")
-                download_all = gr.Button("下载所有输出音频", variant="primary")
+                download_all = gr.Button("下载音频", variant="primary")
                 stop_btn = gr.Button("Stop", variant="primary")
 
             with gr.Accordion("高级设置", open=False):
-                gr.Markdown("如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
+                gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
                 with gr.Row(equal_height=True):
                     basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
                     basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
@@ -1832,7 +1844,26 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                         value=False,
                         visible=False
                     )
-            audio_output = gr.Audio(label="合成音频")
+                with gr.Row(visible=False):
+                    cb_auto_pause = gr.Checkbox(
+                        label="标点自动间距",
+                        value=False
+                    )
+                    number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
+                    number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
+                    number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
+                    number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
+                    number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
+                    cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
+                    number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
+                    number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
+                    number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
+                    number_exclamation.change(None, number_exclamation, None, js="(v)=>{ setStorage('exclamation_pause',v) }")
+                    number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
+
+            audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True, waveform_options={
+                "sample_rate": 24000
+            })
             download_output = gr.File(label="下载文件", file_count="multiple")
 
             language.change(
@@ -1842,12 +1873,12 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 show_progress="hidden",
             )
 
-            custom_ckpt_path.change(model_change, inputs=[language, custom_ckpt_path],
+            custom_ckpt_path.change(model_change, inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
                                     outputs=[basic_ref_text_input, ref_audio, speed_slider])
 
             ref_audio.change(
                 ref_audio_change,
-                inputs=[language, ref_audio],
+                inputs=[language, ref_audio, basic_ref_audio_user, basic_ref_text_input],
                 outputs=[basic_ref_audio_preset, basic_ref_text_input],
                 show_progress="hidden",
             )
@@ -1881,12 +1912,18 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     rvc_index_rate,
                     num_input,
                     modify_words,
+                    auto_pause,
+                    num_comma,
+                    num_period,
+                    num_question,
+                    num_exclamation,
+                    num_semicolon,
                     *gen_texts_input,
             ):
                 if randomize_seed:
                     seed_input = np.random.randint(0, 2 ** 31 - 1)
 
-                if len(modify_words) > 0:
+                if modify_words and len(modify_words) > 0:
                     gen_texts_input_modify = []
                     for text in gen_texts_input:
                         for modify in modify_words.split("\n"):
@@ -1911,6 +1948,14 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     model_name,
                     password,
                     remove_silence,
+                    auto_pause,
+                    pause_rules={
+                        '，': float(num_comma),
+                        '。': float(num_period),
+                        '？': float(num_question),
+                        '！': float(num_exclamation),
+                        '；': float(num_semicolon)
+                    },
                     seed=seed_input,
                     cross_fade_duration=cross_fade_duration_slider,
                     nfe_step=nfe_slider,
@@ -1923,8 +1968,6 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     tone_shift=tone_shift,
                     rvc_index_rate=rvc_index_rate,
                 )
-                gc.collect()
-                torch.cuda.empty_cache()
                 return audio_out, gen_audio_list, used_seed
 
 
@@ -1948,7 +1991,13 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                        tone_shift_slider,
                        rvc_index_rate_slider,
                        num_input,
-                       modify_words_input
+                       modify_words_input,
+                       cb_auto_pause,
+                       number_comma,
+                       number_period,
+                       number_question,
+                       number_exclamation,
+                       number_semicolon
                        ] + textboxes
 
             generate_btn.click(
@@ -2174,14 +2223,22 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                    						       globalThis.getStorage = (key, value)=>{
                    						        return JSON.parse(localStorage.getItem(key))
                    						      }
+                   						      
                    						       var modifyWords = getStorage('modifyWords')
-                   						       return [modifyWords];
+                   						       const auto_pause = getStorage('auto_pause')
+                   						       const comma_pause = getStorage('comma_pause') || '1.0'
+                   						       const period_pause = getStorage('period_pause') || '2.0'
+                   						       const question_pause = getStorage('question_pause') || '3.0'
+                   						       const exclamation_pause = getStorage('exclamation_pause') || '3.0'
+                   						       const semicolon_pause = getStorage('semicolon_pause') || '3.0'
+                   						       return [modifyWords, auto_pause, comma_pause, period_pause, question_pause, exclamation_pause, semicolon_pause];
                    						      }
                    						    """
         app.load(
             None,
             inputs=None,
-            outputs=[modify_words_input],
+            outputs=[modify_words_input, cb_auto_pause, number_comma, number_period, number_question,
+                     number_exclamation, number_semicolon],
             js=js_get_local_storage,
         )
 

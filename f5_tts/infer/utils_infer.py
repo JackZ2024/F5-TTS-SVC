@@ -4,7 +4,6 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # for MPS device compatibility
 sys.path.append(f"{os.path.dirname(os.path.abspath(__file__))}/../../third_party/BigVGAN/")
 
@@ -14,7 +13,6 @@ import tempfile
 from importlib.resources import files
 
 import matplotlib
-
 
 matplotlib.use("Agg")
 
@@ -30,7 +28,6 @@ from vocos import Vocos
 
 from f5_tts.model import CFM
 from f5_tts.model.utils import convert_char_to_pinyin, get_tokenizer
-
 
 _ref_audio_cache = {}
 _ref_text_cache = {}
@@ -63,6 +60,7 @@ cfg_strength = 2.0
 sway_sampling_coef = -1.0
 speed = 1.0
 fix_duration = None
+
 
 # -----------------------------------------
 
@@ -153,8 +151,8 @@ def initialize_asr_pipeline(device: str = device, dtype=None):
         dtype = (
             torch.float16
             if "cuda" in device
-            and torch.cuda.get_device_properties(device).major >= 7
-            and not torch.cuda.get_device_name().endswith("[ZLUDA]")
+               and torch.cuda.get_device_properties(device).major >= 7
+               and not torch.cuda.get_device_name().endswith("[ZLUDA]")
             else torch.float32
         )
     global asr_pipe
@@ -190,8 +188,8 @@ def load_checkpoint(model, ckpt_path, device: str, dtype=None, use_ema=True):
         dtype = (
             torch.float16
             if "cuda" in device
-            and torch.cuda.get_device_properties(device).major >= 7
-            and not torch.cuda.get_device_name().endswith("[ZLUDA]")
+               and torch.cuda.get_device_properties(device).major >= 7
+               and not torch.cuda.get_device_name().endswith("[ZLUDA]")
             else torch.float32
         )
     model = model.to(dtype)
@@ -218,7 +216,7 @@ def load_checkpoint(model, ckpt_path, device: str, dtype=None, use_ema=True):
             if key in checkpoint["model_state_dict"]:
                 del checkpoint["model_state_dict"][key]
 
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     else:
         if ckpt_type == "safetensors":
             checkpoint = {"model_state_dict": checkpoint}
@@ -234,14 +232,14 @@ def load_checkpoint(model, ckpt_path, device: str, dtype=None, use_ema=True):
 
 
 def load_model(
-    model_cls,
-    model_cfg,
-    ckpt_path,
-    mel_spec_type=mel_spec_type,
-    vocab_file="",
-    ode_method=ode_method,
-    use_ema=True,
-    device=device,
+        model_cls,
+        model_cfg,
+        ckpt_path,
+        mel_spec_type=mel_spec_type,
+        vocab_file="",
+        ode_method=ode_method,
+        use_ema=True,
+        device=device,
 ):
     if vocab_file == "":
         vocab_file = str(files("f5_tts").joinpath("infer/examples/vocab.txt"))
@@ -380,22 +378,22 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=print):
 
 
 def infer_process(
-    ref_audio,
-    ref_text,
-    gen_text,
-    model_obj,
-    vocoder,
-    mel_spec_type=mel_spec_type,
-    show_info=print,
-    progress=tqdm,
-    target_rms=target_rms,
-    cross_fade_duration=cross_fade_duration,
-    nfe_step=nfe_step,
-    cfg_strength=cfg_strength,
-    sway_sampling_coef=sway_sampling_coef,
-    speed=speed,
-    fix_duration=fix_duration,
-    device=device,
+        ref_audio,
+        ref_text,
+        gen_text,
+        model_obj,
+        vocoder,
+        mel_spec_type=mel_spec_type,
+        show_info=print,
+        progress=tqdm,
+        target_rms=target_rms,
+        cross_fade_duration=cross_fade_duration,
+        nfe_step=nfe_step,
+        cfg_strength=cfg_strength,
+        sway_sampling_coef=sway_sampling_coef,
+        speed=speed,
+        fix_duration=fix_duration,
+        device=device,
 ):
     # Split the input text into batches
     audio, sr = torchaudio.load(ref_audio)
@@ -475,6 +473,7 @@ def infer_batch_process(
         # Prepare the text
         text_list = [ref_text + gen_text]
         final_text_list = convert_char_to_pinyin(text_list)
+        # print(final_text_list)
 
         ref_audio_len = audio.shape[-1] // hop_length
         if fix_duration is not None:
@@ -512,7 +511,7 @@ def infer_batch_process(
 
             if streaming:
                 for j in range(0, len(generated_wave), chunk_size):
-                    yield generated_wave[j : j + chunk_size], target_sample_rate
+                    yield generated_wave[j: j + chunk_size], target_sample_rate
             else:
                 generated_cpu = generated[0].cpu().numpy()
                 del generated

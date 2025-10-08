@@ -57,3 +57,6 @@ torchfcpe
 # RVC
 pyworld
 
+# faster_whisper
+# stable-ts
+

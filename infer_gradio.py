@@ -39,7 +39,6 @@ from f5_tts.infer.utils_infer import (
     preprocess_ref_audio_text,
     infer_process,
     remove_silence_for_generated_wav,
-    save_spectrogram,
 )
 from f5_tts.model.utils import seed_everything
 
@@ -68,11 +67,11 @@ from infer.configs.config import Config
 from infer.modules.vc.modules import VC
 
 rvc_config = Config()
-# rvc_vc = VC(rvc_config)
+rvc_vc = VC(rvc_config)
 rvc_vc = None
 
-# cur_rvc_model_path = ""
-# custom_ema_model, pre_custom_path = None, ""
+cur_rvc_model_path = ""
+custom_ema_model, pre_custom_path = None, ""
 
 # load models
 
@@ -151,14 +150,13 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding=False,
                              conv_layers=4, pe_attn_head=1)
 
-    # global pre_custom_path, custom_ema_model
-    # if pre_custom_path != ckpt_path or custom_ema_model is None:
-    #     if custom_ema_model is not None:
-    #         del custom_ema_model
-    #         gc.collect()
+    global pre_custom_path, custom_ema_model
+    if pre_custom_path != ckpt_path or custom_ema_model is None:
+        if custom_ema_model is not None:
+            del custom_ema_model
 
-    custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
-    # pre_custom_path = ckpt_path
+        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
+        pre_custom_path = ckpt_path
 
     return custom_ema_model
 
@@ -1335,11 +1333,8 @@ def infer(
         for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
             if stop_infer:
                 break
-                # gr.Warning("停止生成")
-                # print("停止生成")
-                # infer_running = False
-                # return gr.update(), [], used_seed
-                
+
+            print(f"正在生成：{i}/{len(all_gen_text_list)}")
             if "泰语" in model_name and f_version >= 5.0:
                 final_wave, final_sample_rate, combined_spectrogram = thai_infer_process(
                     ref_audio,
@@ -1373,10 +1368,6 @@ def infer(
 
             if stop_infer:
                 break
-                # gr.Warning("停止生成")
-                # print("停止生成")
-                # infer_running = False
-                # return gr.update(), [], used_seed
                 
             generated_waves.append(final_wave)
             spectrograms.append(combined_spectrogram)
@@ -1432,13 +1423,13 @@ def infer(
         print("生成失败，请刷新后重试！")
         infer_running = False
         return gr.update(), [], used_seed
-    finally:
-        del ema_model
-        global rvc_vc, cur_rvc_model_path
-        if rvc_vc is not None:
-            del rvc_vc
-            rvc_vc = None
-            cur_rvc_model_path = ""
+    # finally:
+    #     del ema_model
+    #     global rvc_vc, cur_rvc_model_path
+    #     if rvc_vc is not None:
+    #         del rvc_vc
+    #         rvc_vc = None
+    #         cur_rvc_model_path = ""
     
     if stop_infer:
         gr.Warning("停止生成")

@@ -7,8 +7,8 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-import ctranslate2
 import huggingface_hub
+import stable_whisper
 from faster_whisper import WhisperModel
 
 if TYPE_CHECKING:
@@ -88,11 +88,17 @@ class SelfDisposingModel:
         self._decrement_ref()
 
 
+def get_whisper_folder():
+    if os.path.exists("./whisper_models/whisper-medium-zh-ct2"):
+        return "./whisper_models/whisper-medium-zh-ct2"
+    else:
+        return "deepdml/faster-whisper-large-v3-turbo-ct2"
+
+
 class WhisperModelManager:
     def __init__(self) -> None:
         self.loaded_models: OrderedDict[str, SelfDisposingModel] = OrderedDict()
         self._lock = threading.Lock()
-        self.ctt_model = None
 
     @staticmethod
     def download_model(repo_id):
@@ -112,17 +118,9 @@ class WhisperModelManager:
 
     def _load_fn(self, model_id: str) -> WhisperModel:
         if os.path.exists(model_id):
-            return WhisperModel(
-                model_id,
-                device='cuda',
-                device_index=list(range(ctranslate2.get_cuda_device_count()))
-            )
+            return stable_whisper.load_faster_whisper(model_id)
         else:
-            return WhisperModel(
-                self.download_model(model_id),
-                device='cuda',
-                device_index=list(range(ctranslate2.get_cuda_device_count()))
-            )
+            return stable_whisper.load_faster_whisper(self.download_model(model_id))
 
     def _handle_model_unload(self, model_name: str) -> None:
         with self._lock:
@@ -136,7 +134,8 @@ class WhisperModelManager:
                 raise KeyError(f"Model {model_name} not found")
             self.loaded_models[model_name].unload()
 
-    def load_model(self, model_name: str) -> SelfDisposingModel:
+    def load_model(self) -> SelfDisposingModel:
+        model_name = get_whisper_folder()
         print(f"Loading model {model_name}")
         with self._lock:
             print("Acquired lock")
