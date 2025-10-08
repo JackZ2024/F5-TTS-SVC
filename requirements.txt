@@ -56,6 +56,3 @@ torchfcpe
 
 # RVC
 pyworld
-
-stable-ts
-
