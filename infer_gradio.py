@@ -71,8 +71,8 @@ rvc_config = Config()
 # rvc_vc = VC(rvc_config)
 rvc_vc = None
 
-cur_rvc_model_path = ""
-custom_ema_model, pre_custom_path = None, ""
+# cur_rvc_model_path = ""
+# custom_ema_model, pre_custom_path = None, ""
 
 # load models
 
@@ -151,14 +151,14 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding=False,
                              conv_layers=4, pe_attn_head=1)
 
-    global pre_custom_path, custom_ema_model
-    if pre_custom_path != ckpt_path or custom_ema_model is None:
-        if custom_ema_model is not None:
-            del custom_ema_model
-            gc.collect()
+    # global pre_custom_path, custom_ema_model
+    # if pre_custom_path != ckpt_path or custom_ema_model is None:
+    #     if custom_ema_model is not None:
+    #         del custom_ema_model
+    #         gc.collect()
 
-        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
-        pre_custom_path = ckpt_path
+    custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
+    # pre_custom_path = ckpt_path
 
     return custom_ema_model
 
@@ -1315,7 +1315,8 @@ def infer(
             return gr.update(), [], used_seed
 
     f_version = model_name.rpartition('-')[-1]
-    s_version = svc_model.rpartition('-')[-1]
+    if svc_model:
+        s_version = svc_model.rpartition('-')[-1]
     try:
         f_version = float(f_version)
     except:
@@ -1432,6 +1433,7 @@ def infer(
         infer_running = False
         return gr.update(), [], used_seed
     finally:
+        del ema_model
         global rvc_vc, cur_rvc_model_path
         if rvc_vc is not None:
             del rvc_vc
@@ -1924,6 +1926,7 @@ F5-TTS + SOVITS + Applio + RVC
                         rvc_index_rate=rvc_index_rate,
                     )
                     gc.collect()
+                    torch.cuda.empty_cache()
                     return audio_out, gen_audio_list, used_seed
                 except Exception as e:
                     traceback.print_exc()  # 打印完整堆栈信息
@@ -1932,6 +1935,7 @@ F5-TTS + SOVITS + Applio + RVC
                     global infer_running
                     infer_running = False
                     gc.collect()
+                    torch.cuda.empty_cache()
                     return gr.update(), [], 0
 
 

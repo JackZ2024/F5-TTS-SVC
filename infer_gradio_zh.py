@@ -1363,6 +1363,7 @@ def infer(
                     total_box_count += text_box_text_list[cur_box_index]
                     cur_box_index += 1
 
+    del ema_model
     output_audio_list = []
     ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
     if enable_svc:
@@ -1923,6 +1924,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     rvc_index_rate=rvc_index_rate,
                 )
                 gc.collect()
+                torch.cuda.empty_cache()
                 return audio_out, gen_audio_list, used_seed
 
 

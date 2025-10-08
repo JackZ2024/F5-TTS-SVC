@@ -65,6 +65,8 @@ def hubert_infer(wavPath, vecPath):
         hubert_m = load_model(os.path.join(
             "hubert_pretrain", "hubert-soft-0d54a1f4.pt"), device)
     pred_vec(hubert_m, wavPath, vecPath, device)
+    del hubert_m
+    hubert_m = None
 
 
 if __name__ == "__main__":
