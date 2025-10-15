@@ -1196,7 +1196,7 @@ def infer(
     if seed < 0 or seed > 2 ** 31 - 1:
         gr.Warning("Seed must in range 0 ~ 2147483647. Using random seed instead.")
         seed = np.random.randint(0, 2 ** 31 - 1)
-    # torch.manual_seed(seed)
+
     seed_everything(seed)
     used_seed = seed
 
@@ -1216,27 +1216,9 @@ def infer(
         infer_running = False
         return gr.update(), [], used_seed
 
-    # 检查用户设置的输入框数量是否正常
-    # try:
-    #     num_input = int(num_input)
-    #     if num_input <= 0 or num_input > 20:
-    #         gr.Warning("输入框数量设置不对")
-    #         infer_running = False
-    #         return gr.update(), [], used_seed
-    # except ValueError:
-    #     gr.Warning("输入框数量无法转换为数字")
-    #     infer_running = False
-    #     return gr.update(), [], used_seed
-
     # 把所有的输入框的文本都获取出来，汇总到一块，生成时也用总的这个列表，这样方便显示总进度
     # 如果要根据框保存中间结果，那就在生成的过程中判断是第几个框，所以保存每个框里的文本行的数量。
     all_gen_text_list = []
-    # text_box_text_list = []
-    # for i in range(num_input):
-    #     gen_text_box = gen_texts[i]
-    #     if gen_text_box.strip() == "":
-    #         continue
-    #     index = 0
     gen_text_list = gen_texts.split("\n")
     for gen_text in gen_text_list:
         if gen_text.strip() == "":
@@ -1248,9 +1230,6 @@ def infer(
             gen_text = process_thai_repeat(replace_numbers_with_thai(gen_text))
 
         all_gen_text_list.append(gen_text)
-        # index += 1
-
-        # text_box_text_list.append(index)
 
     if len(all_gen_text_list) == 0:
         gr.Warning("没有要生成的文本")
@@ -1326,9 +1305,7 @@ def infer(
     svc_waves = []
     spectrograms = []
     progress = gr.Progress()
-    # start_pos = 0
-    # cur_box_index = 1
-    # total_box_count = text_box_text_list[0]
+
     svc_sampling_rate = 32000
     segm_audio_list = []
 
@@ -1410,32 +1387,11 @@ def infer(
                     else:
                         print("转换失败-----")
 
-            # if not save_line_audio:
-                # 按文本框保存，需要根据每个文本框的文本行数判断有没有到当前框的结尾，然后进行保存。
-                # if i == total_box_count - 1:
-                #     final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
-                    
-                #     audio_filepath = gen_audio_path + f"/segm_audio-f{f_version}-p{speed}_{cur_box_index}.wav"
-                #     sf.write(audio_filepath, final_waves, final_sample_rate, 'PCM_24')
-                #     segm_audio_list.append(audio_filepath)
-
-                #     if cur_box_index < len(text_box_text_list):
-                #         start_pos = total_box_count
-                #         total_box_count += text_box_text_list[cur_box_index]
-                #         cur_box_index += 1
-
     except:
         gr.Warning("生成失败，请刷新后重试！")
         print("生成失败，请刷新后重试！")
         infer_running = False
         return gr.update(), [], used_seed
-    # finally:
-    #     del ema_model
-    #     global rvc_vc, cur_rvc_model_path
-    #     if rvc_vc is not None:
-    #         del rvc_vc
-    #         rvc_vc = None
-    #         cur_rvc_model_path = ""
     
     if stop_infer:
         gr.Warning("停止生成")
@@ -1446,7 +1402,6 @@ def infer(
     output_audio_list = []
     if enable_svc:
         # 导出合并后的24Khz音频
-        # last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
         last_orgi_audio_path = last_audio_path + f"/orgi_audio-{lang_alone}-f{f_version}-p{speed}.wav"
         final_waves = None
         if len(generated_waves) > 0:
@@ -1455,7 +1410,6 @@ def infer(
             output_audio_list.append(last_orgi_audio_path)
 
         # 导出转换后音频
-        # last_gen_audio_path = last_audio_path + f"/{svc_model}_{svc_type.lower()}_audio.wav"
         last_gen_audio_path = last_audio_path + f"/svc_audio-{lang_alone}-f{f_version}-{svc_type.lower()[0]}{s_version}-p{speed}.wav"
         final_waves = None
         if len(svc_waves) > 0:
@@ -1465,7 +1419,6 @@ def infer(
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        # last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
         last_gen_audio_path = last_audio_path + f"/orgi_audio-{lang_alone}-f{f_version}-p{speed}.wav"
         final_waves = None
         if len(generated_waves) > 0:
@@ -1774,7 +1727,6 @@ F5-TTS + SOVITS + Applio + RVC
                 )
 
             with gr.Row():
-                # num_input = gr.Textbox(label="请输入需要的输入框数量(1-20)", value="1", scale=1)
                 tone_shift_slider = gr.Slider(
                     label="音调调整",
                     minimum=-12,
@@ -1796,25 +1748,6 @@ F5-TTS + SOVITS + Applio + RVC
                 )
                 running_info = gr.Textbox(label="", value="", scale=1)
                
-            # 动态布局区域
-            # rows = []
-            # max_per_row = 5
-            # textboxes = []
-
-            # 创建一个动态布局，最多 20 个输入框
-            # for i in range(4):  # 每行最多 5 个，4 行总共 20 个
-            #     with gr.Row() as row:
-            #         for j in range(max_per_row):
-            #             index = i * max_per_row + j
-            #             if index == 0:
-            #                 textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=True)
-            #             else:
-            #                 textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=10, visible=False)
-            #             textboxes.append(textbox)
-            #         rows.append(row)
-
-            # num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
-            # with gr.Row():
             textbox = gr.Textbox(label=f"生成文本:", lines=10, visible=True)
 
             with gr.Row():
