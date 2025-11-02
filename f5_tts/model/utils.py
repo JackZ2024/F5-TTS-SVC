@@ -206,168 +206,49 @@ def convert_zh_mix_char_to_pinyin(text_list, polyphone=True):
     )  # add custom trans here, to address oov
 
     def has_toned_pinyin(text):
-        """检测文本中是否包含带声调的拼音（声调符号或数字声调）"""
-        words = text.split()
-        for word in words:
-            if not word:
-                continue
+        return "<" in text and ">" in text
 
-            # 检查是否包含声调符号
-            tone_chars = 'āáǎàēéěèīíǐìōóǒòūúǔùüǖǘǚǜ'
-            if any(c in tone_chars for c in word):
-                return True
+    def split_by_brackets(text):
+        """按尖括号分割字符串"""
+        result = re.split(r'<|>', text)
+        # 过滤空字符串
+        return [s for s in result if s]
 
-            # 检查是否以1-4数字结尾（数字声调）
-            if len(word) > 1 and word[-1] in '1234':
-                return True
-
-        return False
-
-    def normalize_pinyin_tone(pinyin):
-        """将带声调符号的拼音转换为数字声调格式"""
-        tone_map = {
-            'ā': 'a1', 'á': 'a2', 'ǎ': 'a3', 'à': 'a4',
-            'ē': 'e1', 'é': 'e2', 'ě': 'e3', 'è': 'e4',
-            'ī': 'i1', 'í': 'i2', 'ǐ': 'i3', 'ì': 'i4',
-            'ō': 'o1', 'ó': 'o2', 'ǒ': 'o3', 'ò': 'o4',
-            'ū': 'u1', 'ú': 'u2', 'ǔ': 'u3', 'ù': 'u4',
-            'ü': 'v', 'ǖ': 'v1', 'ǘ': 'v2', 'ǚ': 'v3', 'ǜ': 'v4'
-        }
-
-        result = pinyin.lower()
-        for char, replacement in tone_map.items():
-            result = result.replace(char, replacement)
-
-        return result
-
-    def is_likely_pinyin_word(word):
-        """在已确定使用拼音的情况下，判断单词是否可能是拼音"""
-        if not word:
-            return False
-
-        word_lower = word.lower()
-
-        # 去掉可能的数字声调
-        if word[-1] in '1234':
-            base = word_lower[:-1]
-        else:
-            base = word_lower
-
-        # 简单检查：只包含字母
-        return re.match(r'^[a-z]+$', base) is not None
+    def convert_single(polyphone: bool, text) -> list[str]:
+        char_list = []
+        for seg in jieba.cut(text):
+            seg_byte_len = len(bytes(seg, "UTF-8"))
+            if seg_byte_len == len(seg):  # if pure alphabets and symbols
+                if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
+                    char_list.append(" ")
+                char_list.extend(seg)
+            elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
+                seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
+                for i, c in enumerate(seg):
+                    if is_chinese(c):
+                        char_list.append(" ")
+                    char_list.append(seg_[i])
+            else:  # if mixed characters, alphabets and symbols
+                for c in seg:
+                    if ord(c) < 256:
+                        char_list.extend(c)
+                    elif is_chinese(c):
+                        char_list.append(" ")
+                        char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
+                    else:
+                        char_list.append(c)
+        return char_list
 
     def process_mixed_segment(text):
         """处理包含中文和拼音的混合文本段"""
         char_list = []
-        words = text.split()
-
-        for word in words:
-            if not word:
-                continue
-
-            # 检查是否包含中文字符和拉丁字符
-            has_chinese = any(is_chinese(c) for c in word)
-            has_latin = any(c.isalpha() and ord(c) < 256 for c in word)
-
-            if has_chinese and has_latin:
-                # 中文和拼音混在一起，需要分离处理
-                i = 0
-                current_pinyin = ""
-
-                while i < len(word):
-                    char = word[i]
-
-                    if is_chinese(char):
-                        # 如果当前有拼音段，先处理拼音段
-                        if current_pinyin:
-                            if is_likely_pinyin_word(current_pinyin):
-                                if char_list and char_list[-1] != " ":
-                                    char_list.append(" ")
-                                char_list.append(normalize_pinyin_tone(current_pinyin))
-                            else:
-                                # 不是拼音，按字符添加
-                                if char_list and len(current_pinyin) > 1 and char_list[-1] not in " :'\"":
-                                    char_list.append(" ")
-                                char_list.extend(current_pinyin)
-                            current_pinyin = ""
-
-                        # 处理中文字符
-                        if char_list:
-                            char_list.append(" ")
-                        char_list.extend(lazy_pinyin(char, style=Style.TONE3, tone_sandhi=True))
-
-                    elif char.isalpha() and ord(char) < 256:
-                        # 拉丁字母，累积到拼音段
-                        current_pinyin += char
-
-                    elif char.isdigit() and current_pinyin:
-                        # 数字声调，添加到拼音段
-                        current_pinyin += char
-
-                    else:
-                        # 其他字符（标点等）
-                        # 先处理累积的拼音
-                        if current_pinyin:
-                            if is_likely_pinyin_word(current_pinyin):
-                                if char_list and char_list[-1] != " ":
-                                    char_list.append(" ")
-                                char_list.append(normalize_pinyin_tone(current_pinyin))
-                            else:
-                                if char_list and len(current_pinyin) > 1 and char_list[-1] not in " :'\"":
-                                    char_list.append(" ")
-                                char_list.extend(current_pinyin)
-                            current_pinyin = ""
-
-                        # 处理标点符号
-                        char_list.append(char)
-
-                    i += 1
-
-                # 处理剩余的拼音段
-                if current_pinyin:
-                    if is_likely_pinyin_word(current_pinyin):
-                        if char_list and char_list[-1] != " ":
-                            char_list.append(" ")
-                        char_list.append(normalize_pinyin_tone(current_pinyin))
-                    else:
-                        if char_list and len(current_pinyin) > 1 and char_list[-1] not in " :'\"":
-                            char_list.append(" ")
-                        char_list.extend(current_pinyin)
-
-            elif has_chinese:
-                # 纯中文，按原逻辑处理
-                for seg in jieba.cut(word):
-                    seg_byte_len = len(bytes(seg, "UTF-8"))
-                    if seg_byte_len == len(seg):  # if pure alphabets and symbols
-                        if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
-                            char_list.append(" ")
-                        char_list.extend(seg)
-                    elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
-                        seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
-                        for i, c in enumerate(seg):
-                            if is_chinese(c):
-                                char_list.append(" ")
-                            char_list.append(seg_[i])
-                    else:  # if mixed characters, alphabets and symbols
-                        for c in seg:
-                            if ord(c) < 256:
-                                char_list.extend(c)
-                            elif is_chinese(c):
-                                char_list.append(" ")
-                                char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
-                            else:
-                                char_list.append(c)
-            elif is_likely_pinyin_word(word):
-                # 纯拼音单词，直接添加
-                if char_list and char_list[-1] != " ":
-                    char_list.append(" ")
-                char_list.append(normalize_pinyin_tone(word))
+        parts = split_by_brackets(text)
+        for part in parts:
+            if any(is_chinese(c) for c in part):
+                char_list.extend(convert_single(polyphone, part))
             else:
-                # 其他情况（标点符号等），直接添加
-                if char_list and len(word) > 1 and char_list[-1] not in " :'\"":
-                    char_list.append(" ")
-                char_list.extend(word)
-
+                char_list.append(" ")
+                char_list.append(part)
         return char_list
 
     for text in text_list:
@@ -381,28 +262,7 @@ def convert_zh_mix_char_to_pinyin(text_list, polyphone=True):
             char_list = process_mixed_segment(text)
         else:
             # 不包含拼音，使用原有逻辑
-            char_list = []
-            for seg in jieba.cut(text):
-                seg_byte_len = len(bytes(seg, "UTF-8"))
-                if seg_byte_len == len(seg):  # if pure alphabets and symbols
-                    if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
-                        char_list.append(" ")
-                    char_list.extend(seg)
-                elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
-                    seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
-                    for i, c in enumerate(seg):
-                        if is_chinese(c):
-                            char_list.append(" ")
-                        char_list.append(seg_[i])
-                else:  # if mixed characters, alphabets and symbols
-                    for c in seg:
-                        if ord(c) < 256:
-                            char_list.extend(c)
-                        elif is_chinese(c):
-                            char_list.append(" ")
-                            char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
-                        else:
-                            char_list.append(c)
+            char_list = convert_single(polyphone, text)
 
         final_text_list.append(char_list)
 
