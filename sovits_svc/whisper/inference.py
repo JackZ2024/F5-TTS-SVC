@@ -62,17 +62,20 @@ def pred_ppg(whisper: Whisper, wavPath, ppgPath, device):
 
 
 whisper_model = None
-
+pre_custom_whisper = None
 
 def whisper_infer(wavPath, ppgPath, custom_whisper):
-    global whisper_model
+    global whisper_model, pre_custom_whisper
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if whisper_model is None:
+    if whisper_model is None or pre_custom_whisper != custom_whisper:
+
         if custom_whisper:
             whisper_model = load_model(os.path.join(huggingface_hub.snapshot_download(custom_whisper), "large-v2.pt"), device)
         else:
             whisper_model = load_model(os.path.join("whisper_pretrain", "large-v2.pt"), device)
+        pre_custom_whisper = custom_whisper
     pred_ppg(whisper_model, wavPath, ppgPath, device)
+    # del whisper_model
 
 
 if __name__ == "__main__":

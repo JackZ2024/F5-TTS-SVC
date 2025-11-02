@@ -1364,9 +1364,10 @@ def infer(
                     cur_box_index += 1
 
     output_audio_list = []
+    ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
     if enable_svc:
         # 导出合并后的24Khz音频
-        last_orgi_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_orgi_audio_path = last_audio_path + f"/{model_name}--{ref_basename}-orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
@@ -1383,7 +1384,7 @@ def infer(
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = last_audio_path + f"/{model_name}_orgi_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/{model_name}--{ref_basename}-orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
