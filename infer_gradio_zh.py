@@ -1165,6 +1165,7 @@ def infer(
         svc_model="",
         tone_shift=0,
         rvc_index_rate=0.75,
+        no_ref_audio=False
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
@@ -1311,6 +1312,7 @@ def infer(
             nfe_step=nfe_step,
             speed=speed,
             show_info=show_info,
+            no_ref_audio=no_ref_audio
             # progress=gr.Progress(),
             # lang=lang,
         )
@@ -1750,11 +1752,13 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 with gr.Row(equal_height=True):
                     basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
                     basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
-                    basic_ref_text_input = gr.Textbox(
-                        label="参考音频对应文本",
-                        lines=2,
-                        value=def_txt,
-                    )
+                    with gr.Column():
+                        basic_ref_text_input = gr.Textbox(
+                            label="参考音频对应文本",
+                            lines=2,
+                            value=def_txt,
+                        )
+                        cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
 
                     basic_ref_audio_user.upload(
                         fn=transcribe_audio,
@@ -1918,6 +1922,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     num_question,
                     num_exclamation,
                     num_semicolon,
+                    no_ref_audio,
                     *gen_texts_input,
             ):
                 if randomize_seed:
@@ -1967,6 +1972,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     svc_model=svc_model,
                     tone_shift=tone_shift,
                     rvc_index_rate=rvc_index_rate,
+                    no_ref_audio=no_ref_audio
                 )
                 return audio_out, gen_audio_list, used_seed
 
@@ -1997,7 +2003,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                        number_period,
                        number_question,
                        number_exclamation,
-                       number_semicolon
+                       number_semicolon,
+                       cb_no_ref
                        ] + textboxes
 
             generate_btn.click(

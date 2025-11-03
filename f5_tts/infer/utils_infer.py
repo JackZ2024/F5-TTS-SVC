@@ -141,43 +141,49 @@ def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=dev
     return vocoder
 
 
-# load asr pipeline
-
-asr_pipe = None
-
-
-def initialize_asr_pipeline(device: str = device, dtype=None):
-    if dtype is None:
-        dtype = (
-            torch.float16
-            if "cuda" in device
-               and torch.cuda.get_device_properties(device).major >= 7
-               and not torch.cuda.get_device_name().endswith("[ZLUDA]")
-            else torch.float32
-        )
-    global asr_pipe
-    asr_pipe = pipeline(
-        "automatic-speech-recognition",
-        model="openai/whisper-large-v3-turbo",
-        torch_dtype=dtype,
-        device=device,
-    )
-
+faster_whisper_model = None
 
 # transcribe
 
+def download_model(token, repo_id):
+    import huggingface_hub
 
-def transcribe(ref_audio, language=None):
-    global asr_pipe
-    if asr_pipe is None:
-        initialize_asr_pipeline(device=device)
-    return asr_pipe(
-        ref_audio,
-        chunk_length_s=30,
-        batch_size=128,
-        generate_kwargs={"task": "transcribe", "language": language} if language else {"task": "transcribe"},
-        return_timestamps=False,
-    )["text"].strip()
+    allow_patterns = [
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ]
+
+    kwargs = {
+        "allow_patterns": allow_patterns,
+        "token": token
+    }
+
+    return huggingface_hub.snapshot_download(repo_id, **kwargs)
+
+
+def transcribe(ref_audio, language=None, token=None, repo_id=None):
+    import ctranslate2
+    from faster_whisper import WhisperModel
+    global faster_whisper_model
+    if faster_whisper_model is None:
+        if repo_id is None:
+            repo_id = "Systran/faster-whisper-large-v3"
+        faster_whisper_model = WhisperModel(
+            download_model(token, repo_id),
+            device='cuda' if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        )
+    if language == "zh":
+        init_prompt = "这是一个中文句子，带标点。接下来是另一个句子，注意标点和语气。"
+    else:
+        init_prompt = None
+    segments, _ = faster_whisper_model.transcribe(ref_audio, language=language, initial_prompt=init_prompt)
+    result = ""
+    for segment in segments:
+        result += segment.text
+    return result.strip()
 
 
 # load model checkpoint for inference
@@ -394,6 +400,7 @@ def infer_process(
         speed=speed,
         fix_duration=fix_duration,
         device=device,
+        no_ref_audio=False
 ):
     # Split the input text into batches
     audio, sr = torchaudio.load(ref_audio)
@@ -403,7 +410,7 @@ def infer_process(
         print(f"gen_text {i}", gen_text)
     print("\n")
 
-    # show_info(f"Generating audio in {len(gen_text_batches)} batches...")
+    show_info(f"Generating audio in {len(gen_text_batches)} batches...")
     return next(
         infer_batch_process(
             (audio, sr),
@@ -421,6 +428,7 @@ def infer_process(
             speed=speed,
             fix_duration=fix_duration,
             device=device,
+            no_ref_audio=no_ref_audio
         )
     )
 
@@ -429,23 +437,24 @@ def infer_process(
 
 
 def infer_batch_process(
-    ref_audio,
-    ref_text,
-    gen_text_batches,
-    model_obj,
-    vocoder,
-    mel_spec_type="vocos",
-    progress=tqdm,
-    target_rms=0.1,
-    cross_fade_duration=0.15,
-    nfe_step=32,
-    cfg_strength=2.0,
-    sway_sampling_coef=-1.0,
-    speed=1.0,
-    fix_duration=None,
-    device=None,
-    streaming=False,
-    chunk_size=2048,
+        ref_audio,
+        ref_text,
+        gen_text_batches,
+        model_obj,
+        vocoder,
+        mel_spec_type="vocos",
+        progress=tqdm,
+        target_rms=0.1,
+        cross_fade_duration=0.15,
+        nfe_step=32,
+        cfg_strength=2.0,
+        sway_sampling_coef=-1,
+        speed=1,
+        fix_duration=None,
+        device=None,
+        streaming=False,
+        chunk_size=2048,
+        no_ref_audio=False
 ):
     audio, sr = ref_audio
     if audio.shape[0] > 1:
@@ -473,7 +482,6 @@ def infer_batch_process(
         # Prepare the text
         text_list = [ref_text + gen_text]
         final_text_list = convert_char_to_pinyin(text_list)
-        # print(final_text_list)
 
         ref_audio_len = audio.shape[-1] // hop_length
         if fix_duration is not None:
@@ -493,6 +501,7 @@ def infer_batch_process(
                 steps=nfe_step,
                 cfg_strength=cfg_strength,
                 sway_sampling_coef=sway_sampling_coef,
+                no_ref_audio=no_ref_audio
             )
             del _
 
