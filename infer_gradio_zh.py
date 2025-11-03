@@ -1386,7 +1386,7 @@ def infer(
             output_audio_list.append(last_gen_audio_path)
     else:
         # 导出合并后的24Khz音频
-        last_gen_audio_path = last_audio_path + f"/{model_name}--{ref_basename}-orgi_audio.wav"
+        last_gen_audio_path = last_audio_path + f"/{model_name}--{ref_basename}--spd{speed}-orgi_audio.wav"
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
