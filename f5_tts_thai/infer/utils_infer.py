@@ -27,7 +27,6 @@ from transformers import pipeline
 from vocos import Vocos
 import syllapy 
 from ssg import syllable_tokenize
-from f5_tts_thai.cleantext.TH2IPA import any_ipa
 from f5_tts_thai.model import CFM
 from f5_tts_thai.model.utils import (
     get_tokenizer,
@@ -489,6 +488,7 @@ def infer_batch_process(
 
         # Prepare the text
         if use_ipa:
+            from f5_tts_thai.cleantext.TH2IPA import any_ipa
             ref_text_ipa = any_ipa(ref_text)
             gen_text_ipa = any_ipa(gen_text)
             final_text_list = [ref_text_ipa + " " + gen_text_ipa]
