@@ -8,6 +8,7 @@ import os
 import jieba
 from pypinyin import lazy_pinyin, Style, load_phrases_dict
 import torch
+from pypinyin.constants import PHRASES_DICT
 from torch.nn.utils.rnn import pad_sequence
 
 
@@ -124,7 +125,7 @@ def get_tokenizer(dataset_name, tokenizer: str = "pinyin"):
             for i, char in enumerate(f):
                 vocab_char_map[char[:-1]] = i
         vocab_size = len(vocab_char_map)
-        assert vocab_char_map[" "] == 0, "make sure space is of idx 0 in vocab.txt, cuz 0 is used for unknown char"
+        assert vocab_char_map[" "] == 0, "make sure space is of idx 0 in vocab.txt, cuz space is used for unknown char"
 
     elif tokenizer == "byte":
         vocab_char_map = None
@@ -189,15 +190,13 @@ def convert_zh_mix_char_to_pinyin(text_list, polyphone=True):
     global dict_loaded
     if not dict_loaded:
         dict_loaded = True
-        jieba_dict_file = str(files("f5_tts").joinpath(f"dicts/jieba.txt"))
-        if os.path.exists(jieba_dict_file):
-            print(f"加载jieba词典{jieba_dict_file}")
-            jieba.load_userdict(jieba_dict_file)
 
         pypinyin_dict_file = str(files("f5_tts").joinpath(f"dicts/pypinyin.txt"))
         if os.path.exists(pypinyin_dict_file):
             print(f"加载pypinyin词典{pypinyin_dict_file}")
             load_phrases_dict(load_pypinyin_dict_file(pypinyin_dict_file))
+            for word in PHRASES_DICT:
+                jieba.add_word(word)
 
     final_text_list = []
     custom_trans = str.maketrans(

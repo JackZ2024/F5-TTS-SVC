@@ -31,7 +31,7 @@ from scipy.io import wavfile
 from f5_tts.api import F5TTS
 from f5_tts.infer.utils_infer import transcribe
 from f5_tts.model.utils import convert_char_to_pinyin
-
+from third_party.adma.preprocess import extract_ssl_features
 
 training_process = None
 system = platform.system()
@@ -40,7 +40,6 @@ tts_api = None
 last_checkpoint = ""
 last_device = ""
 last_ema = None
-
 
 path_data = str(files("f5_tts").joinpath("../../data"))
 path_project_ckpts = str(files("f5_tts").joinpath("../../ckpts"))
@@ -59,26 +58,27 @@ device = (
 
 # Save settings from a JSON file
 def save_settings(
-    project_name,
-    exp_name,
-    learning_rate,
-    batch_size_per_gpu,
-    batch_size_type,
-    max_samples,
-    grad_accumulation_steps,
-    max_grad_norm,
-    epochs,
-    num_warmup_updates,
-    save_per_updates,
-    keep_last_n_checkpoints,
-    last_per_updates,
-    finetune,
-    file_checkpoint_train,
-    tokenizer_type,
-    tokenizer_file,
-    mixed_precision,
-    logger,
-    ch_8bit_adam,
+        project_name,
+        exp_name,
+        learning_rate,
+        batch_size_per_gpu,
+        batch_size_type,
+        max_samples,
+        grad_accumulation_steps,
+        max_grad_norm,
+        epochs,
+        num_warmup_updates,
+        save_per_updates,
+        keep_last_n_checkpoints,
+        last_per_updates,
+        finetune,
+        file_checkpoint_train,
+        tokenizer_type,
+        tokenizer_file,
+        mixed_precision,
+        logger,
+        ch_8bit_adam,
+        ch_use_adma
 ):
     path_project = os.path.join(path_project_ckpts, project_name)
     os.makedirs(path_project, exist_ok=True)
@@ -104,6 +104,7 @@ def save_settings(
         "mixed_precision": mixed_precision,
         "logger": logger,
         "bnb_optimizer": ch_8bit_adam,
+        "use_adma": ch_use_adma
     }
     with open(file_setting, "w") as f:
         json.dump(settings, f, indent=4)
@@ -137,6 +138,7 @@ def load_settings(project_name):
         "mixed_precision": "fp16",
         "logger": "none",
         "bnb_optimizer": False,
+        "use_adma": False
     }
     if device == "mps":
         default_settings["mixed_precision"] = "none"
@@ -168,6 +170,7 @@ def load_settings(project_name):
         default_settings["mixed_precision"],
         default_settings["logger"],
         default_settings["bnb_optimizer"],
+        default_settings["use_adma"]
     )
 
 
@@ -178,53 +181,15 @@ def get_audio_duration(audio_path):
     return audio.shape[1] / sample_rate
 
 
-def clear_text(text):
-    """Clean and prepare text by lowering the case and stripping whitespace."""
-    return text.lower().strip()
-
-
-def get_rms(
-    y,
-    frame_length=2048,
-    hop_length=512,
-    pad_mode="constant",
-):  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.py
-    padding = (int(frame_length // 2), int(frame_length // 2))
-    y = np.pad(y, padding, mode=pad_mode)
-
-    axis = -1
-    # put our new within-frame axis at the end for now
-    out_strides = y.strides + tuple([y.strides[axis]])
-    # Reduce the shape on the framing axis
-    x_shape_trimmed = list(y.shape)
-    x_shape_trimmed[axis] -= frame_length - 1
-    out_shape = tuple(x_shape_trimmed) + tuple([frame_length])
-    xw = np.lib.stride_tricks.as_strided(y, shape=out_shape, strides=out_strides)
-    if axis < 0:
-        target_axis = axis - 1
-    else:
-        target_axis = axis + 1
-    xw = np.moveaxis(xw, -1, target_axis)
-    # Downsample along the target axis
-    slices = [slice(None)] * xw.ndim
-    slices[axis] = slice(0, None, hop_length)
-    x = xw[tuple(slices)]
-
-    # Calculate power
-    power = np.mean(np.abs(x) ** 2, axis=-2, keepdims=True)
-
-    return np.sqrt(power)
-
-
 class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.py
     def __init__(
-        self,
-        sr: int,
-        threshold: float = -40.0,
-        min_length: int = 2000,
-        min_interval: int = 300,
-        hop_size: int = 20,
-        max_sil_kept: int = 2000,
+            self,
+            sr: int,
+            threshold: float = -40.0,
+            min_length: int = 20000,  # 20 seconds
+            min_interval: int = 300,
+            hop_size: int = 20,
+            max_sil_kept: int = 2000,
     ):
         if not min_length >= min_interval >= hop_size:
             raise ValueError("The following condition must be satisfied: min_length >= min_interval >= hop_size")
@@ -240,9 +205,9 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
 
     def _apply_slice(self, waveform, begin, end):
         if len(waveform.shape) > 1:
-            return waveform[:, begin * self.hop_size : min(waveform.shape[1], end * self.hop_size)]
+            return waveform[:, begin * self.hop_size: min(waveform.shape[1], end * self.hop_size)]
         else:
-            return waveform[begin * self.hop_size : min(waveform.shape[0], end * self.hop_size)]
+            return waveform[begin * self.hop_size: min(waveform.shape[0], end * self.hop_size)]
 
     # @timeit
     def slice(self, waveform):
@@ -252,7 +217,7 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
             samples = waveform
         if samples.shape[0] <= self.min_length:
             return [waveform]
-        rms_list = get_rms(y=samples, frame_length=self.win_size, hop_length=self.hop_size).squeeze(0)
+        rms_list = librosa.feature.rms(y=samples, frame_length=self.win_size, hop_length=self.hop_size).squeeze(0)
         sil_tags = []
         silence_start = None
         clip_start = 0
@@ -274,17 +239,17 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
                 continue
             # Need slicing. Record the range of silent frames to be removed.
             if i - silence_start <= self.max_sil_kept:
-                pos = rms_list[silence_start : i + 1].argmin() + silence_start
+                pos = rms_list[silence_start: i + 1].argmin() + silence_start
                 if silence_start == 0:
                     sil_tags.append((0, pos))
                 else:
                     sil_tags.append((pos, pos))
                 clip_start = pos
             elif i - silence_start <= self.max_sil_kept * 2:
-                pos = rms_list[i - self.max_sil_kept : silence_start + self.max_sil_kept + 1].argmin()
+                pos = rms_list[i - self.max_sil_kept: silence_start + self.max_sil_kept + 1].argmin()
                 pos += i - self.max_sil_kept
-                pos_l = rms_list[silence_start : silence_start + self.max_sil_kept + 1].argmin() + silence_start
-                pos_r = rms_list[i - self.max_sil_kept : i + 1].argmin() + i - self.max_sil_kept
+                pos_l = rms_list[silence_start: silence_start + self.max_sil_kept + 1].argmin() + silence_start
+                pos_r = rms_list[i - self.max_sil_kept: i + 1].argmin() + i - self.max_sil_kept
                 if silence_start == 0:
                     sil_tags.append((0, pos_r))
                     clip_start = pos_r
@@ -292,8 +257,8 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
                     sil_tags.append((min(pos_l, pos), max(pos_r, pos)))
                     clip_start = max(pos_r, pos)
             else:
-                pos_l = rms_list[silence_start : silence_start + self.max_sil_kept + 1].argmin() + silence_start
-                pos_r = rms_list[i - self.max_sil_kept : i + 1].argmin() + i - self.max_sil_kept
+                pos_l = rms_list[silence_start: silence_start + self.max_sil_kept + 1].argmin() + silence_start
+                pos_r = rms_list[i - self.max_sil_kept: i + 1].argmin() + i - self.max_sil_kept
                 if silence_start == 0:
                     sil_tags.append((0, pos_r))
                 else:
@@ -304,10 +269,9 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
         total_frames = rms_list.shape[0]
         if silence_start is not None and total_frames - silence_start >= self.min_interval:
             silence_end = min(total_frames, silence_start + self.max_sil_kept)
-            pos = rms_list[silence_start : silence_end + 1].argmin() + silence_start
+            pos = rms_list[silence_start: silence_end + 1].argmin() + silence_start
             sil_tags.append((pos, total_frames + 1))
-        # Apply and return slices.
-        ####音频+起始时间+终止时间
+        # Apply and return slices: [chunk, start, end]
         if len(sil_tags) == 0:
             return [[waveform, 0, int(total_frames * self.hop_size)]]
         else:
@@ -363,27 +327,28 @@ def terminate_process(pid):
 
 
 def start_training(
-    dataset_name,
-    exp_name,
-    learning_rate,
-    batch_size_per_gpu,
-    batch_size_type,
-    max_samples,
-    grad_accumulation_steps,
-    max_grad_norm,
-    epochs,
-    num_warmup_updates,
-    save_per_updates,
-    keep_last_n_checkpoints,
-    last_per_updates,
-    finetune,
-    file_checkpoint_train,
-    tokenizer_type,
-    tokenizer_file,
-    mixed_precision,
-    stream,
-    logger,
-    ch_8bit_adam,
+        dataset_name,
+        exp_name,
+        learning_rate,
+        batch_size_per_gpu,
+        batch_size_type,
+        max_samples,
+        grad_accumulation_steps,
+        max_grad_norm,
+        epochs,
+        num_warmup_updates,
+        save_per_updates,
+        keep_last_n_checkpoints,
+        last_per_updates,
+        finetune,
+        file_checkpoint_train,
+        tokenizer_type,
+        tokenizer_file,
+        mixed_precision,
+        stream,
+        logger,
+        ch_8bit_adam,
+        ch_use_adma
 ):
     global training_process, tts_api, stop_signal
 
@@ -468,6 +433,9 @@ def start_training(
     if ch_8bit_adam:
         cmd += " --bnb_optimizer"
 
+    if ch_use_adma:
+        cmd += " --use_adma"
+
     print("run command : \n" + cmd + "\n")
 
     save_settings(
@@ -491,6 +459,7 @@ def start_training(
         mixed_precision,
         logger,
         ch_8bit_adam,
+        ch_use_adma
     )
 
     try:
@@ -655,7 +624,7 @@ def create_data_project(name, tokenizer_type):
     return gr.update(choices=project_list, value=name)
 
 
-def transcribe_all(name_project, audio_files, language, user=False, progress=gr.Progress()):
+def transcribe_all(name_project, audio_files, language, user, token, repo_id, progress=gr.Progress()):
     path_project = os.path.join(path_data, name_project)
     path_dataset = os.path.join(path_project, "dataset")
     path_project_wavs = os.path.join(path_project, "wavs")
@@ -686,30 +655,33 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
 
     alpha = 0.5
     _max = 1.0
-    slicer = Slicer(24000)
 
     num = 0
     error_num = 0
     data = ""
-    for file_audio in progress.tqdm(file_audios, desc="transcribe files", total=len((file_audios))):
-        audio, _ = librosa.load(file_audio, sr=24000, mono=True)
+    for file_audio in progress.tqdm(file_audios, desc="transcribe files", total=len(file_audios)):
+        # Load audio with its native sampling rate
+        audio, sr = librosa.load(file_audio, sr=None, mono=True)
+
+        # Initialize slicer with the audio's native sampling rate
+        slicer = Slicer(sr)
 
         list_slicer = slicer.slice(audio)
         for chunk, start, end in progress.tqdm(list_slicer, total=len(list_slicer), desc="slicer files"):
-            name_segment = os.path.join(f"segment_{num}")
+            name_segment = f"{os.path.splitext(os.path.basename(file_audio))[0]}_segment_{num}"
             file_segment = os.path.join(path_project_wavs, f"{name_segment}.wav")
 
             tmp_max = np.abs(chunk).max()
             if tmp_max > 1:
                 chunk /= tmp_max
             chunk = (chunk / tmp_max * (_max * alpha)) + (1 - alpha) * chunk
-            wavfile.write(file_segment, 24000, (chunk * 32767).astype(np.int16))
+            wavfile.write(file_segment, sr, (chunk * 32767).astype(np.int16))
 
             try:
-                text = transcribe(file_segment, language)
-                text = text.lower().strip().replace('"', "")
+                text = transcribe(file_segment, language, token, repo_id)
+                text = text.strip()
 
-                data += f"{name_segment}|{text}\n"
+                data += f"{file_segment}|{text}\n"
 
                 num += 1
             except:  # noqa: E722
@@ -718,12 +690,8 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
     with open(file_metadata, "w", encoding="utf-8-sig") as f:
         f.write(data)
 
-    if error_num != []:
-        error_text = f"\nerror files : {error_num}"
-    else:
-        error_text = ""
-
-    return f"transcribe complete samples : {num}\npath : {path_project_wavs}{error_text}"
+    error_text = f"\nerror files: {error_num}" if error_num > 0 else ""
+    return f"transcribe complete samples: {num}\npath: {path_project_wavs}{error_text}"
 
 
 def format_seconds_to_hms(seconds):
@@ -734,9 +702,9 @@ def format_seconds_to_hms(seconds):
 
 
 def get_correct_audio_path(
-    audio_input,
-    base_path="wavs",
-    supported_formats=("wav", "mp3", "aac", "flac", "m4a", "alac", "ogg", "aiff", "wma", "amr"),
+        audio_input,
+        base_path="wavs",
+        supported_formats=("wav", "mp3", "aac", "flac", "m4a", "alac", "ogg", "aiff", "wma", "amr"),
 ):
     file_audio = None
 
@@ -764,13 +732,14 @@ def get_correct_audio_path(
     return file_audio
 
 
-def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
+def create_metadata(name_project, ch_tokenizer, ch_use_adma_prepare, progress=gr.Progress()):
     path_project = os.path.join(path_data, name_project)
     path_project_wavs = os.path.join(path_project, "wavs")
     file_metadata = os.path.join(path_project, "metadata.csv")
     file_raw = os.path.join(path_project, "raw.arrow")
     file_duration = os.path.join(path_project, "duration.json")
     file_vocab = os.path.join(path_project, "vocab.txt")
+    file_info = os.path.join(path_project, "info.txt")
 
     if not os.path.isfile(file_metadata):
         return "The file was not found in " + file_metadata, ""
@@ -789,7 +758,7 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
     text_vocab_set = set()
     for line in progress.tqdm(data.split("\n"), total=count):
         sp_line = line.split("|")
-        if len(sp_line) != 2:
+        if len(sp_line) < 2:
             continue
         name_audio, text = sp_line[:2]
 
@@ -816,7 +785,7 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
             error_files.append([file_audio, "very short text length 3"])
             continue
 
-        text = clear_text(text)
+        text = text.strip()
         text = convert_char_to_pinyin([text], polyphone=True)[0]
 
         audio_path_list.append(file_audio)
@@ -835,9 +804,10 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
     min_second = round(min(duration_list), 2)
     max_second = round(max(duration_list), 2)
 
-    with ArrowWriter(path=file_raw, writer_batch_size=1) as writer:
+    with ArrowWriter(path=file_raw) as writer:
         for line in progress.tqdm(result, total=len(result), desc="prepare data"):
             writer.write(line)
+        writer.finalize()
 
     with open(file_duration, "w") as f:
         json.dump({"duration": duration_list}, f, ensure_ascii=False)
@@ -868,8 +838,12 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
     else:
         error_text = ""
 
+    if ch_use_adma_prepare:
+        extract_ssl_features(path_project)
+    info = f"prepare complete \nsamples : {len(text_list)}\ntime data : {format_seconds_to_hms(lenght)}\nmin sec : {min_second}\nmax sec : {max_second}\nfile_arrow : {file_raw}\nvocab : {vocab_size}\n{error_text}"
+    open(file_info, 'w', encoding='utf-8').write(info)
     return (
-        f"prepare complete \nsamples : {len(text_list)}\ntime data : {format_seconds_to_hms(lenght)}\nmin sec : {min_second}\nmax sec : {max_second}\nfile_arrow : {file_raw}\nvocab : {vocab_size}\n{error_text}",
+        info,
         new_vocal,
     )
 
@@ -879,14 +853,14 @@ def check_user(value):
 
 
 def calculate_train(
-    name_project,
-    epochs,
-    learning_rate,
-    batch_size_per_gpu,
-    batch_size_type,
-    max_samples,
-    num_warmup_updates,
-    finetune,
+        name_project,
+        epochs,
+        learning_rate,
+        batch_size_per_gpu,
+        batch_size_type,
+        max_samples,
+        num_warmup_updates,
+        finetune,
 ):
     path_project = os.path.join(path_data, name_project)
     file_duration = os.path.join(path_project, "duration.json")
@@ -917,16 +891,16 @@ def calculate_train(
         total_memory = 0
         for i in range(gpu_count):
             gpu_properties = torch.cuda.get_device_properties(i)
-            total_memory += gpu_properties.total_memory / (1024**3)  # in GB
+            total_memory += gpu_properties.total_memory / (1024 ** 3)  # in GB
     elif torch.xpu.is_available():
         gpu_count = torch.xpu.device_count()
         total_memory = 0
         for i in range(gpu_count):
             gpu_properties = torch.xpu.get_device_properties(i)
-            total_memory += gpu_properties.total_memory / (1024**3)
+            total_memory += gpu_properties.total_memory / (1024 ** 3)
     elif torch.backends.mps.is_available():
         gpu_count = 1
-        total_memory = psutil.virtual_memory().available / (1024**3)
+        total_memory = psutil.virtual_memory().available / (1024 ** 3)
 
     avg_gpu_memory = total_memory / gpu_count
 
@@ -1036,15 +1010,18 @@ def vocab_count(text):
     return str(len(text.split(",")))
 
 
-def vocab_extend(project_name, symbols, model_type):
+def vocab_extend(project_name, symbols, model_type, vocab_tokenizer, vocab_pretrain):
     if symbols == "":
         return "Symbols empty!"
 
     name_project = project_name
-    path_project = os.path.join(path_data, name_project)
-    file_vocab_project = os.path.join(path_project, "vocab.txt")
+    path_project_data = os.path.join(path_data, name_project)
+    file_vocab_project = os.path.join(path_project_data, "vocab.txt")
 
-    file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
+    if vocab_tokenizer:
+        file_vocab = vocab_tokenizer
+    else:
+        file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
     if not os.path.isfile(file_vocab):
         return f"the file {file_vocab} not found !"
 
@@ -1077,12 +1054,17 @@ def vocab_extend(project_name, symbols, model_type):
     with open(file_vocab_project, "w", encoding="utf-8") as f:
         f.write("\n".join(vocab))
 
-    if model_type == "F5TTS_v1_Base":
-        ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
-    elif model_type == "F5TTS_Base":
-        ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
-    elif model_type == "E2TTS_Base":
-        ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
+    if vocab_pretrain:
+        ckpt_path = vocab_pretrain
+    else:
+        if model_type == "F5TTS_v1_Base":
+            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
+        elif model_type == "F5TTS_Base":
+            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
+        elif model_type == "F5TTS_Base_bigvgan":
+            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base_bigvgan/model_1250000.pt"))
+        elif model_type == "E2TTS_Base":
+            ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
 
     vocab_size_new = len(miss_symbols)
 
@@ -1099,13 +1081,15 @@ def vocab_extend(project_name, symbols, model_type):
     return f"vocab old size : {size_vocab}\nvocab new size : {size}\nvocab add : {vocab_size_new}\nnew symbols :\n{vocab_new}"
 
 
-def vocab_check(project_name, tokenizer_type):
+def vocab_check(project_name, tokenizer_type, vocab_tokenizer_text):
     name_project = project_name
     path_project = os.path.join(path_data, name_project)
 
     file_metadata = os.path.join(path_project, "metadata.csv")
-
-    file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
+    if vocab_tokenizer_text:
+        file_vocab = vocab_tokenizer_text
+    else:
+        file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
     if not os.path.isfile(file_vocab):
         return f"the file {file_vocab} not found !", ""
 
@@ -1127,14 +1111,18 @@ def vocab_check(project_name, tokenizer_type):
         if len(sp) != 2:
             continue
 
-        text = sp[1].lower().strip()
+        text = sp[1].strip()
         if tokenizer_type == "pinyin":
             text = convert_char_to_pinyin([text], polyphone=True)[0]
 
         for t in text:
+            has_miss_symbols = False
             if t not in vocab and t not in miss_symbols_keep:
+                has_miss_symbols = True
                 miss_symbols.append(t)
                 miss_symbols_keep[t] = t
+            if has_miss_symbols:
+                print(f"{sp[1].strip()} -> {''.join(text)} contains miss symbols")
 
     if miss_symbols == []:
         vocab_miss = ""
@@ -1198,7 +1186,8 @@ def get_random_sample_infer(project_name):
 
 
 def infer(
-    project, file_checkpoint, exp_name, ref_text, ref_audio, gen_text, nfe_step, use_ema, speed, seed, remove_silence
+        project, file_checkpoint, exp_name, ref_text, ref_audio, gen_text, nfe_step, use_ema, speed, seed,
+        remove_silence
 ):
     global last_checkpoint, last_device, tts_api, last_ema
 
@@ -1234,8 +1223,8 @@ def infer(
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
         tts_api.infer(
             ref_file=ref_audio,
-            ref_text=ref_text.lower().strip(),
-            gen_text=gen_text.lower().strip(),
+            ref_text=ref_text.strip(),
+            gen_text=gen_text.strip(),
             nfe_step=nfe_step,
             speed=speed,
             remove_silence=remove_silence,
@@ -1312,9 +1301,9 @@ def get_gpu_stats():
         for i in range(gpu_count):
             gpu_name = torch.cuda.get_device_name(i)
             gpu_properties = torch.cuda.get_device_properties(i)
-            total_memory = gpu_properties.total_memory / (1024**3)  # in GB
-            allocated_memory = torch.cuda.memory_allocated(i) / (1024**2)  # in MB
-            reserved_memory = torch.cuda.memory_reserved(i) / (1024**2)  # in MB
+            total_memory = gpu_properties.total_memory / (1024 ** 3)  # in GB
+            allocated_memory = torch.cuda.memory_allocated(i) / (1024 ** 2)  # in MB
+            reserved_memory = torch.cuda.memory_reserved(i) / (1024 ** 2)  # in MB
 
             gpu_stats += (
                 f"GPU {i} Name: {gpu_name}\n"
@@ -1327,9 +1316,9 @@ def get_gpu_stats():
         for i in range(gpu_count):
             gpu_name = torch.xpu.get_device_name(i)
             gpu_properties = torch.xpu.get_device_properties(i)
-            total_memory = gpu_properties.total_memory / (1024**3)  # in GB
-            allocated_memory = torch.xpu.memory_allocated(i) / (1024**2)  # in MB
-            reserved_memory = torch.xpu.memory_reserved(i) / (1024**2)  # in MB
+            total_memory = gpu_properties.total_memory / (1024 ** 3)  # in GB
+            allocated_memory = torch.xpu.memory_allocated(i) / (1024 ** 2)  # in MB
+            reserved_memory = torch.xpu.memory_reserved(i) / (1024 ** 2)  # in MB
 
             gpu_stats += (
                 f"GPU {i} Name: {gpu_name}\n"
@@ -1341,7 +1330,7 @@ def get_gpu_stats():
         gpu_count = 1
         gpu_stats += "MPS GPU\n"
         total_memory = psutil.virtual_memory().total / (
-            1024**3
+                1024 ** 3
         )  # Total system memory (MPS doesn't have its own memory)
         allocated_memory = 0
         reserved_memory = 0
@@ -1361,8 +1350,8 @@ def get_gpu_stats():
 def get_cpu_stats():
     cpu_usage = psutil.cpu_percent(interval=1)
     memory_info = psutil.virtual_memory()
-    memory_used = memory_info.used / (1024**2)
-    memory_total = memory_info.total / (1024**2)
+    memory_used = memory_info.used / (1024 ** 2)
+    memory_total = memory_info.total / (1024 ** 2)
     memory_percent = memory_info.percent
 
     pid = os.getpid()
@@ -1449,12 +1438,15 @@ Skip this step if you have your dataset, metadata.csv, and a folder wavs with al
             )
 
             audio_speaker = gr.File(label="Voice", type="filepath", file_count="multiple")
-            txt_lang = gr.Textbox(label="Language", value="English")
+            with gr.Row():
+                txt_lang = gr.Textbox(label="Language", value="English")
+                hf_token = gr.Textbox(label="Huggingface token", value="")
+                hf_rep_id = gr.Textbox(label="Faster Whisper model repo id", value="")
             bt_transcribe = bt_create = gr.Button("Transcribe")
             txt_info_transcribe = gr.Textbox(label="Info", value="")
             bt_transcribe.click(
                 fn=transcribe_all,
-                inputs=[cm_project, audio_speaker, txt_lang, ch_manual],
+                inputs=[cm_project, audio_speaker, txt_lang, ch_manual, hf_token, hf_rep_id],
                 outputs=[txt_info_transcribe],
             )
             ch_manual.change(fn=check_user, inputs=[ch_manual], outputs=[audio_speaker, mark_info_transcribe])
@@ -1475,7 +1467,9 @@ Skip this step if you have your dataset, metadata.csv, and a folder wavs with al
             gr.Markdown("""```plaintext 
 Check the vocabulary for fine-tuning Emilia_ZH_EN to ensure all symbols are included. For fine-tuning a new language.
 ```""")
-
+            with gr.Row():
+                vocab_tokenizer_text = gr.Textbox(label="Custom Tokenizer File Path")
+                vocab_pretrain_text = gr.Textbox(label="Custom Pretrain Model File Path（Need prune first）")
             check_button = gr.Button("Check Vocab")
             txt_info_check = gr.Textbox(label="Info", value="")
 
@@ -1484,7 +1478,8 @@ Using the extended model, you can finetune to a new language that is missing sym
 ```""")
 
             exp_name_extend = gr.Radio(
-                label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "E2TTS_Base"], value="F5TTS_v1_Base"
+                label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"],
+                value="F5TTS_v1_Base"
             )
 
             with gr.Row():
@@ -1501,16 +1496,21 @@ Using the extended model, you can finetune to a new language that is missing sym
 
             txt_extend.change(vocab_count, inputs=[txt_extend], outputs=[txt_count_symbol])
             check_button.click(
-                fn=vocab_check, inputs=[cm_project, tokenizer_type], outputs=[txt_info_check, txt_extend]
+                fn=vocab_check, inputs=[cm_project, tokenizer_type, vocab_tokenizer_text],
+                outputs=[txt_info_check, txt_extend]
             )
             extend_button.click(
-                fn=vocab_extend, inputs=[cm_project, txt_extend, exp_name_extend], outputs=[txt_info_extend]
+                fn=vocab_extend,
+                inputs=[cm_project, txt_extend, exp_name_extend, vocab_tokenizer_text, vocab_pretrain_text],
+                outputs=[txt_info_extend]
             )
 
         with gr.TabItem("Prepare Data"):
-            gr.Markdown("""```plaintext 
-Skip this step if you have your dataset, raw.arrow, duration.json, and vocab.txt
-```""")
+            with gr.Row():
+                ch_use_adma_prepare = gr.Checkbox(label="启用A-DMA", value=False)
+                gr.Markdown("""```plaintext 
+        Skip this step if you have your dataset, raw.arrow, duration.json, and vocab.txt
+        ```""")
 
             gr.Markdown(
                 """```plaintext    
@@ -1543,12 +1543,13 @@ Skip this step if you have your dataset, raw.arrow, duration.json, and vocab.txt
             txt_vocab_prepare = gr.Textbox(label="Vocab", value="")
 
             bt_prepare.click(
-                fn=create_metadata, inputs=[cm_project, ch_tokenizern], outputs=[txt_info_prepare, txt_vocab_prepare]
+                fn=create_metadata, inputs=[cm_project, ch_tokenizern, ch_use_adma_prepare],
+                outputs=[txt_info_prepare, txt_vocab_prepare]
             )
 
             random_sample_prepare = gr.Button("Random Sample")
 
-            with gr.Row():
+            with gr.Row(equal_height=True):
                 random_text_prepare = gr.Textbox(label="Tokenizer")
                 random_audio_prepare = gr.Audio(label="Audio", type="filepath")
 
@@ -1562,9 +1563,10 @@ The auto-setting is still experimental. Set a large value of epoch if not sure; 
 If you encounter a memory error, try reducing the batch size per GPU to a smaller number.
 ```""")
             with gr.Row():
-                exp_name = gr.Radio(label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "E2TTS_Base"])
-                tokenizer_file = gr.Textbox(label="Tokenizer File")
-                file_checkpoint_train = gr.Textbox(label="Path to the Pretrained Checkpoint")
+                exp_name = gr.Radio(label="Model",
+                                    choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"])
+                tokenizer_file = gr.Textbox(label="Tokenizer File", visible=False)
+                file_checkpoint_train = gr.Textbox(label="Path to the Pretrained Checkpoint", visible=False)
 
             with gr.Row():
                 ch_finetune = bt_create = gr.Checkbox(label="Finetune")
@@ -1611,8 +1613,9 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
 
             with gr.Row():
                 ch_8bit_adam = gr.Checkbox(label="Use 8-bit Adam optimizer")
-                mixed_precision = gr.Radio(label="Mixed Precision", choices=["none", "fp16", "bf16"])
-                cd_logger = gr.Radio(label="Logger", choices=["none", "wandb", "tensorboard"])
+                ch_use_adma = gr.Checkbox(label="启动A-DMA")
+                mixed_precision = gr.Radio(label="Mixed Precision", choices=["none", "fp16", "bf16"], value="fp16")
+                cd_logger = gr.Radio(label="Logger", choices=["none", "wandb", "tensorboard"], value="tensorboard")
                 with gr.Column():
                     start_button = gr.Button("Start Training")
                     stop_button = gr.Button("Stop Training", interactive=False)
@@ -1638,6 +1641,7 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
                     mixed_precision_value,
                     logger_value,
                     bnb_optimizer_value,
+                    ch_use_adma_value
                 ) = load_settings(projects_selelect)
 
                 # Assigning values to the respective components
@@ -1660,6 +1664,7 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
                 mixed_precision.value = mixed_precision_value
                 cd_logger.value = logger_value
                 ch_8bit_adam.value = bnb_optimizer_value
+                ch_use_adma.value = ch_use_adma_value
 
             ch_stream = gr.Checkbox(label="Stream Output Experiment", value=True)
             txt_info_train = gr.Textbox(label="Info", value="")
@@ -1720,6 +1725,7 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
                     ch_stream,
                     cd_logger,
                     ch_8bit_adam,
+                    ch_use_adma
                 ],
                 outputs=[txt_info_train, start_button, stop_button],
             )
@@ -1751,6 +1757,7 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
                 check_finetune, inputs=[ch_finetune], outputs=[file_checkpoint_train, tokenizer_file, tokenizer_type]
             )
 
+
             def setup_load_settings():
                 output_components = [
                     exp_name,
@@ -1772,8 +1779,10 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
                     mixed_precision,
                     cd_logger,
                     ch_8bit_adam,
+                    ch_use_adma
                 ]
                 return output_components
+
 
             outputs = setup_load_settings()
 
@@ -1794,7 +1803,8 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
 Check the use_ema setting (True or False) for your model to see what works best for you. Set seed to -1 for random.
 ```""")
             exp_name = gr.Radio(
-                label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "E2TTS_Base"], value="F5TTS_v1_Base"
+                label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"],
+                value="F5TTS_v1_Base"
             )
             list_checkpoints, checkpoint_select = get_checkpoints_project(projects_selelect, False)
 
@@ -1871,14 +1881,18 @@ Reduce the Base model size from 5GB to 1.3GB. The new checkpoint file prunes out
         with gr.TabItem("System Info"):
             output_box = gr.Textbox(label="GPU and CPU Information", lines=20)
 
+
             def update_stats():
                 return get_combined_stats()
+
 
             update_button = gr.Button("Update Stats")
             update_button.click(fn=update_stats, outputs=output_box)
 
+
             def auto_update():
                 yield gr.update(value=update_stats())
+
 
             gr.update(fn=auto_update, inputs=[], outputs=output_box)
 

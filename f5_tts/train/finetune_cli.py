@@ -2,13 +2,17 @@ import argparse
 import os
 import shutil
 from importlib.resources import files
+from pathlib import Path
 
 from cached_path import cached_path
 
 from f5_tts.model import CFM, DiT, Trainer, UNetT
 from f5_tts.model.dataset import load_dataset
 from f5_tts.model.utils import get_tokenizer
-
+from third_party.adma import CFM_ADMA
+from third_party.adma.dataset_adma import load_dataset_adma
+from third_party.adma.trainer_adma import ADMATrainer
+from third_party.adma.dit_adma import DiTADMA
 
 # -------------------------- Dataset Settings --------------------------- #
 target_sample_rate = 24000
@@ -16,7 +20,9 @@ n_mel_channels = 100
 hop_length = 256
 win_length = 1024
 n_fft = 1024
-mel_spec_type = "vocos"  # 'vocos' or 'bigvgan'
+
+
+# mel_spec_type = "vocos"  # 'vocos' or 'bigvgan'
 
 
 # -------------------------- Argument Parsing --------------------------- #
@@ -27,7 +33,7 @@ def parse_args():
         "--exp_name",
         type=str,
         default="F5TTS_v1_Base",
-        choices=["F5TTS_v1_Base", "F5TTS_Base", "E2TTS_Base"],
+        choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"],
         help="Experiment name",
     )
     parser.add_argument("--dataset_name", type=str, default="Emilia_ZH_EN", help="Name of the dataset to use")
@@ -71,6 +77,11 @@ def parse_args():
         action="store_true",
         help="Use 8-bit Adam optimizer from bitsandbytes",
     )
+    parser.add_argument(
+        "--use_adma",
+        action="store_true",
+        help="Use A-DMA to accelerate training",
+    )
 
     return parser.parse_args()
 
@@ -82,12 +93,18 @@ def main():
     args = parse_args()
 
     checkpoint_path = str(files("f5_tts").joinpath(f"../../ckpts/{args.dataset_name}"))
-
+    if args.exp_name == "F5TTS_Base_bigvgan":
+        mel_spec_type = "bigvgan"
+    else:
+        mel_spec_type = "vocos"
     # Model parameters based on experiment name
 
     if args.exp_name == "F5TTS_v1_Base":
         wandb_resume_id = None
-        model_cls = DiT
+        if args.use_adma:
+            model_cls = DiTADMA
+        else:
+            model_cls = DiT
         model_cfg = dict(
             dim=1024,
             depth=22,
@@ -98,11 +115,16 @@ def main():
         )
         if args.finetune:
             if args.pretrain is None:
-                ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
+                pretrains = list(Path(checkpoint_path).glob("pretrained_*"))
+                if not pretrains or len(pretrains) == 0:
+                    ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
+                else:
+                    ckpt_path = os.path.join(checkpoint_path, pretrains[0])
             else:
                 ckpt_path = args.pretrain
+            print("ckpt_path", ckpt_path)
 
-    elif args.exp_name == "F5TTS_Base":
+    elif args.exp_name == "F5TTS_Base" or args.exp_name == "F5TTS_Base_bigvgan":
         wandb_resume_id = None
         model_cls = DiT
         model_cfg = dict(
@@ -117,10 +139,12 @@ def main():
         )
         if args.finetune:
             if args.pretrain is None:
-                ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
+                if args.exp_name == "F5TTS_Base":
+                    ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
+                else:
+                    ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base_bigvgan/model_1250000.pt"))
             else:
                 ckpt_path = args.pretrain
-
     elif args.exp_name == "E2TTS_Base":
         wandb_resume_id = None
         model_cls = UNetT
@@ -162,7 +186,7 @@ def main():
 
     vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, tokenizer)
 
-    print("\nvocab : ", vocab_size)
+    print("\nvocab : ", vocab_size + 1)   # 模型实际使用的时候还有一个填充token
     print("\nvocoder : ", mel_spec_type)
 
     mel_spec_kwargs = dict(
@@ -174,35 +198,71 @@ def main():
         mel_spec_type=mel_spec_type,
     )
 
-    model = CFM(
-        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
-        mel_spec_kwargs=mel_spec_kwargs,
-        vocab_char_map=vocab_char_map,
-    )
+    if args.use_adma:
+        model = CFM_ADMA(
+            transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
+            mel_spec_kwargs=mel_spec_kwargs,
+            vocab_char_map=vocab_char_map,
+        )
+        trainer = ADMATrainer(
+            model,
+            args.epochs,
+            args.learning_rate,
+            num_warmup_updates=args.num_warmup_updates,
+            save_per_updates=args.save_per_updates,
+            keep_last_n_checkpoints=args.keep_last_n_checkpoints,
+            checkpoint_path=checkpoint_path,
+            batch_size_per_gpu=args.batch_size_per_gpu,
+            batch_size_type=args.batch_size_type,
+            max_samples=args.max_samples,
+            grad_accumulation_steps=args.grad_accumulation_steps,
+            max_grad_norm=args.max_grad_norm,
+            logger=args.logger,
+            wandb_project=args.dataset_name,
+            wandb_run_name=args.exp_name,
+            wandb_resume_id=wandb_resume_id,
+            log_samples=args.log_samples,
+            last_per_updates=args.last_per_updates,
+            bnb_optimizer=args.bnb_optimizer,
+            mel_spec_type=mel_spec_type
+        )
+        train_dataset = load_dataset_adma(
+            args.dataset_name,
+            tokenizer,
+            dataset_type="CustomDatasetADMA",
+            mel_spec_kwargs=mel_spec_kwargs,
+        )
+    else:
+        model = CFM(
+            transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
+            mel_spec_kwargs=mel_spec_kwargs,
+            vocab_char_map=vocab_char_map,
+        )
 
-    trainer = Trainer(
-        model,
-        args.epochs,
-        args.learning_rate,
-        num_warmup_updates=args.num_warmup_updates,
-        save_per_updates=args.save_per_updates,
-        keep_last_n_checkpoints=args.keep_last_n_checkpoints,
-        checkpoint_path=checkpoint_path,
-        batch_size_per_gpu=args.batch_size_per_gpu,
-        batch_size_type=args.batch_size_type,
-        max_samples=args.max_samples,
-        grad_accumulation_steps=args.grad_accumulation_steps,
-        max_grad_norm=args.max_grad_norm,
-        logger=args.logger,
-        wandb_project=args.dataset_name,
-        wandb_run_name=args.exp_name,
-        wandb_resume_id=wandb_resume_id,
-        log_samples=args.log_samples,
-        last_per_updates=args.last_per_updates,
-        bnb_optimizer=args.bnb_optimizer,
-    )
+        trainer = Trainer(
+            model,
+            args.epochs,
+            args.learning_rate,
+            num_warmup_updates=args.num_warmup_updates,
+            save_per_updates=args.save_per_updates,
+            keep_last_n_checkpoints=args.keep_last_n_checkpoints,
+            checkpoint_path=checkpoint_path,
+            batch_size_per_gpu=args.batch_size_per_gpu,
+            batch_size_type=args.batch_size_type,
+            max_samples=args.max_samples,
+            grad_accumulation_steps=args.grad_accumulation_steps,
+            max_grad_norm=args.max_grad_norm,
+            logger=args.logger,
+            wandb_project=args.dataset_name,
+            wandb_run_name=args.exp_name,
+            wandb_resume_id=wandb_resume_id,
+            log_samples=args.log_samples,
+            last_per_updates=args.last_per_updates,
+            bnb_optimizer=args.bnb_optimizer,
+            mel_spec_type=mel_spec_type
+        )
 
-    train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs)
+        train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs)
 
     trainer.train(
         train_dataset,

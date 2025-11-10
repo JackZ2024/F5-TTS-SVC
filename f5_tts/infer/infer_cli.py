@@ -86,6 +86,12 @@ parser.add_argument(
     help="The transcript/subtitle for the reference audio",
 )
 parser.add_argument(
+    "-sf",
+    "--ref_file",
+    type=str,
+    help="The transcript/subtitle file for the reference audio",
+)
+parser.add_argument(
     "-t",
     "--gen_text",
     type=str,
@@ -200,6 +206,8 @@ ref_text = (
     if args.ref_text is not None
     else config.get("ref_text", "Some call me nature, others call me mother nature.")
 )
+if args.ref_file:
+    ref_text = open(args.ref_file, 'r', encoding='utf-8').read()
 gen_text = args.gen_text or config.get("gen_text", "Here we generate something just for test.")
 gen_file = args.gen_file or config.get("gen_file", "")
 
@@ -307,6 +315,7 @@ ema_model = load_model(
 
 
 def main():
+    torch.manual_seed(42)
     main_voice = {"ref_audio": ref_audio, "ref_text": ref_text}
     if "voices" not in config:
         voices = {"main": main_voice}

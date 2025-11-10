@@ -1165,7 +1165,8 @@ def infer(
         svc_model="",
         tone_shift=0,
         rvc_index_rate=0.75,
-        no_ref_audio=False
+        no_ref_audio=False,
+        cfg_strength=2.0,
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
@@ -1312,7 +1313,8 @@ def infer(
             nfe_step=nfe_step,
             speed=speed,
             show_info=show_info,
-            no_ref_audio=no_ref_audio
+            no_ref_audio=no_ref_audio,
+            cfg_strength=cfg_strength
             # progress=gr.Progress(),
             # lang=lang,
         )
@@ -1808,6 +1810,14 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     step=0.1,
                     info="调整音频语速",
                 )
+                cfg_slider = gr.Slider(
+                    label="参考强度设置",
+                    minimum=0.0,
+                    maximum=10.0,
+                    value=2.0,
+                    step=0.1,
+                    info="值越大越像参考，值越小随机性越大",
+                )
                 nfe_slider = gr.Slider(
                     label="NFE Steps",
                     minimum=4,
@@ -1841,6 +1851,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                         label="按行保存音频",
                         info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
                         value=False,
+                        visible=False
                     )
                     insert_punct_in_space = gr.Checkbox(
                         label="插入标点",
@@ -1862,7 +1873,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
                     number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
                     number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
-                    number_exclamation.change(None, number_exclamation, None, js="(v)=>{ setStorage('exclamation_pause',v) }")
+                    number_exclamation.change(None, number_exclamation, None,
+                                              js="(v)=>{ setStorage('exclamation_pause',v) }")
                     number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
 
             audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True, waveform_options={
@@ -1877,7 +1889,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 show_progress="hidden",
             )
 
-            custom_ckpt_path.change(model_change, inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
+            custom_ckpt_path.change(model_change,
+                                    inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
                                     outputs=[basic_ref_text_input, ref_audio, speed_slider])
 
             ref_audio.change(
@@ -1923,6 +1936,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     num_exclamation,
                     num_semicolon,
                     no_ref_audio,
+                    cfg_strength,
                     *gen_texts_input,
             ):
                 if randomize_seed:
@@ -1972,7 +1986,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                     svc_model=svc_model,
                     tone_shift=tone_shift,
                     rvc_index_rate=rvc_index_rate,
-                    no_ref_audio=no_ref_audio
+                    no_ref_audio=no_ref_audio,
+                    cfg_strength=cfg_strength
                 )
                 return audio_out, gen_audio_list, used_seed
 
@@ -2004,7 +2019,8 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                        number_question,
                        number_exclamation,
                        number_semicolon,
-                       cb_no_ref
+                       cb_no_ref,
+                       cfg_slider
                        ] + textboxes
 
             generate_btn.click(
