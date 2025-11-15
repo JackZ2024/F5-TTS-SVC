@@ -143,6 +143,7 @@ def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=dev
 
 faster_whisper_model = None
 
+
 # transcribe
 
 def download_model(token, repo_id):
@@ -400,7 +401,8 @@ def infer_process(
         speed=speed,
         fix_duration=fix_duration,
         device=device,
-        no_ref_audio=False
+        no_ref_audio=False,
+        ft_vocos=None
 ):
     # Split the input text into batches
     audio, sr = torchaudio.load(ref_audio)
@@ -428,7 +430,8 @@ def infer_process(
             speed=speed,
             fix_duration=fix_duration,
             device=device,
-            no_ref_audio=no_ref_audio
+            no_ref_audio=no_ref_audio,
+            ft_vocos=ft_vocos
         )
     )
 
@@ -454,7 +457,8 @@ def infer_batch_process(
         device=None,
         streaming=False,
         chunk_size=2048,
-        no_ref_audio=False
+        no_ref_audio=False,
+        ft_vocos=None
 ):
     audio, sr = ref_audio
     if audio.shape[0] > 1:
@@ -509,7 +513,11 @@ def infer_batch_process(
             generated = generated[:, ref_audio_len:, :]
             generated = generated.permute(0, 2, 1)
             if mel_spec_type == "vocos":
-                generated_wave = vocoder.decode(generated)
+                if ft_vocos is not None:
+                    print("use finetune vocos: " + ft_vocos)
+                    generated_wave = Vocos.from_pretrained(ft_vocos).eval().to(device).decode(generated)
+                else:
+                    generated_wave = vocoder.decode(generated)
             elif mel_spec_type == "bigvgan":
                 generated_wave = vocoder(generated)
             if rms < target_rms:

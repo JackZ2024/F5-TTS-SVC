@@ -86,7 +86,6 @@ parser.add_argument(
     help="The transcript/subtitle for the reference audio",
 )
 parser.add_argument(
-    "-sf",
     "--ref_file",
     type=str,
     help="The transcript/subtitle file for the reference audio",
@@ -186,6 +185,11 @@ parser.add_argument(
     type=str,
     help="Specify the device to run on",
 )
+parser.add_argument(
+    "--ft_vocos",
+    type=str,
+    help="Finetune vocos huggingface repo id",
+)
 args = parser.parse_args()
 
 
@@ -236,6 +240,7 @@ speed = args.speed or config.get("speed", speed)
 fix_duration = args.fix_duration or config.get("fix_duration", fix_duration)
 device = args.device or config.get("device", device)
 no_ref_audio = args.no_ref_audio
+ft_vocos = args.ft_vocos
 
 
 # patches for pip pkg user
@@ -292,18 +297,9 @@ if model != "F5TTS_Base":
     assert vocoder_name == model_cfg.model.mel_spec.mel_spec_type
 
 # override for previous models
-if model == "F5TTS_Base":
-    if vocoder_name == "vocos":
-        ckpt_step = 1200000
-    elif vocoder_name == "bigvgan":
-        model = "F5TTS_Base_bigvgan"
-        ckpt_type = "pt"
-elif model == "E2TTS_Base":
-    repo_name = "E2-TTS"
-    ckpt_step = 1200000
 
 if not ckpt_file:
-    ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{model}/model_{ckpt_step}.{ckpt_type}"))
+    ckpt_file = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
 
 print(f"Using {model}...")
 ema_model = load_model(
@@ -315,7 +311,6 @@ ema_model = load_model(
 
 
 def main():
-    torch.manual_seed(42)
     main_voice = {"ref_audio": ref_audio, "ref_text": ref_text}
     if "voices" not in config:
         voices = {"main": main_voice}
@@ -368,7 +363,8 @@ def main():
             speed=local_speed,
             fix_duration=fix_duration,
             device=device,
-            no_ref_audio=no_ref_audio
+            no_ref_audio=no_ref_audio,
+            ft_vocos=ft_vocos
         )
         generated_audio_segments.append(audio_segment)
 

@@ -28,7 +28,7 @@ from datasets.arrow_writer import ArrowWriter
 from safetensors.torch import load_file, save_file
 from scipy.io import wavfile
 
-from f5_tts.api import F5TTS
+# from f5_tts.api import F5TTS
 from f5_tts.infer.utils_infer import transcribe
 from f5_tts.model.utils import convert_char_to_pinyin
 from third_party.adma.preprocess import extract_ssl_features
@@ -815,9 +815,9 @@ def create_metadata(name_project, ch_tokenizer, ch_use_adma_prepare, progress=gr
     new_vocal = ""
     if not ch_tokenizer:
         if not os.path.isfile(file_vocab):
-            file_vocab_finetune = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
+            file_vocab_finetune = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
             if not os.path.isfile(file_vocab_finetune):
-                return "Error: Vocabulary file 'Emilia_ZH_EN_pinyin' not found!", ""
+                return "Error: Vocabulary file 'OpenF5-TTS-Base' not found!", ""
             shutil.copy2(file_vocab_finetune, file_vocab)
 
         with open(file_vocab, "r", encoding="utf-8-sig") as f:
@@ -1021,7 +1021,7 @@ def vocab_extend(project_name, symbols, model_type, vocab_tokenizer, vocab_pretr
     if vocab_tokenizer:
         file_vocab = vocab_tokenizer
     else:
-        file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
+        file_vocab = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
     if not os.path.isfile(file_vocab):
         return f"the file {file_vocab} not found !"
 
@@ -1058,13 +1058,7 @@ def vocab_extend(project_name, symbols, model_type, vocab_tokenizer, vocab_pretr
         ckpt_path = vocab_pretrain
     else:
         if model_type == "F5TTS_v1_Base":
-            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"))
-        elif model_type == "F5TTS_Base":
-            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
-        elif model_type == "F5TTS_Base_bigvgan":
-            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base_bigvgan/model_1250000.pt"))
-        elif model_type == "E2TTS_Base":
-            ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
+            ckpt_path = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/model.pt"))
 
     vocab_size_new = len(miss_symbols)
 
@@ -1089,7 +1083,7 @@ def vocab_check(project_name, tokenizer_type, vocab_tokenizer_text):
     if vocab_tokenizer_text:
         file_vocab = vocab_tokenizer_text
     else:
-        file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
+        file_vocab = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
     if not os.path.isfile(file_vocab):
         return f"the file {file_vocab} not found !", ""
 
@@ -1478,7 +1472,7 @@ Using the extended model, you can finetune to a new language that is missing sym
 ```""")
 
             exp_name_extend = gr.Radio(
-                label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"],
+                label="Model", choices=["F5TTS_v1_Base"],
                 value="F5TTS_v1_Base"
             )
 
@@ -1564,7 +1558,7 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
 ```""")
             with gr.Row():
                 exp_name = gr.Radio(label="Model",
-                                    choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"])
+                                    choices=["F5TTS_v1_Base"])
                 tokenizer_file = gr.Textbox(label="Tokenizer File", visible=False)
                 file_checkpoint_train = gr.Textbox(label="Path to the Pretrained Checkpoint", visible=False)
 
@@ -1798,68 +1792,68 @@ If you encounter a memory error, try reducing the batch size per GPU to a smalle
                 outputs=outputs,
             )
 
-        with gr.TabItem("Test Model"):
-            gr.Markdown("""```plaintext 
-Check the use_ema setting (True or False) for your model to see what works best for you. Set seed to -1 for random.
-```""")
-            exp_name = gr.Radio(
-                label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"],
-                value="F5TTS_v1_Base"
-            )
-            list_checkpoints, checkpoint_select = get_checkpoints_project(projects_selelect, False)
-
-            with gr.Row():
-                nfe_step = gr.Number(label="NFE Step", value=32)
-                speed = gr.Slider(label="Speed", value=1.0, minimum=0.3, maximum=2.0, step=0.1)
-                seed = gr.Number(label="Random Seed", value=-1, minimum=-1)
-                remove_silence = gr.Checkbox(label="Remove Silence")
-
-            with gr.Row():
-                ch_use_ema = gr.Checkbox(
-                    label="Use EMA", value=True, info="Turn off at early stage might offer better results"
-                )
-                cm_checkpoint = gr.Dropdown(
-                    choices=list_checkpoints, value=checkpoint_select, label="Checkpoints", allow_custom_value=True
-                )
-                bt_checkpoint_refresh = gr.Button("Refresh")
-
-            random_sample_infer = gr.Button("Random Sample")
-
-            ref_text = gr.Textbox(label="Reference Text")
-            ref_audio = gr.Audio(label="Reference Audio", type="filepath")
-            gen_text = gr.Textbox(label="Text to Generate")
-
-            random_sample_infer.click(
-                fn=get_random_sample_infer, inputs=[cm_project], outputs=[ref_text, gen_text, ref_audio]
-            )
-
-            with gr.Row():
-                txt_info_gpu = gr.Textbox("", label="Inference on Device :")
-                seed_info = gr.Textbox(label="Used Random Seed :")
-                check_button_infer = gr.Button("Inference")
-
-            gen_audio = gr.Audio(label="Generated Audio", type="filepath")
-
-            check_button_infer.click(
-                fn=infer,
-                inputs=[
-                    cm_project,
-                    cm_checkpoint,
-                    exp_name,
-                    ref_text,
-                    ref_audio,
-                    gen_text,
-                    nfe_step,
-                    ch_use_ema,
-                    speed,
-                    seed,
-                    remove_silence,
-                ],
-                outputs=[gen_audio, txt_info_gpu, seed_info],
-            )
-
-            bt_checkpoint_refresh.click(fn=get_checkpoints_project, inputs=[cm_project], outputs=[cm_checkpoint])
-            cm_project.change(fn=get_checkpoints_project, inputs=[cm_project], outputs=[cm_checkpoint])
+#         with gr.TabItem("Test Model"):
+#             gr.Markdown("""```plaintext
+# Check the use_ema setting (True or False) for your model to see what works best for you. Set seed to -1 for random.
+# ```""")
+#             exp_name = gr.Radio(
+#                 label="Model", choices=["F5TTS_v1_Base", "F5TTS_Base", "F5TTS_Base_bigvgan", "E2TTS_Base"],
+#                 value="F5TTS_v1_Base"
+#             )
+#             list_checkpoints, checkpoint_select = get_checkpoints_project(projects_selelect, False)
+#
+#             with gr.Row():
+#                 nfe_step = gr.Number(label="NFE Step", value=32)
+#                 speed = gr.Slider(label="Speed", value=1.0, minimum=0.3, maximum=2.0, step=0.1)
+#                 seed = gr.Number(label="Random Seed", value=-1, minimum=-1)
+#                 remove_silence = gr.Checkbox(label="Remove Silence")
+#
+#             with gr.Row():
+#                 ch_use_ema = gr.Checkbox(
+#                     label="Use EMA", value=True, info="Turn off at early stage might offer better results"
+#                 )
+#                 cm_checkpoint = gr.Dropdown(
+#                     choices=list_checkpoints, value=checkpoint_select, label="Checkpoints", allow_custom_value=True
+#                 )
+#                 bt_checkpoint_refresh = gr.Button("Refresh")
+#
+#             random_sample_infer = gr.Button("Random Sample")
+#
+#             ref_text = gr.Textbox(label="Reference Text")
+#             ref_audio = gr.Audio(label="Reference Audio", type="filepath")
+#             gen_text = gr.Textbox(label="Text to Generate")
+#
+#             random_sample_infer.click(
+#                 fn=get_random_sample_infer, inputs=[cm_project], outputs=[ref_text, gen_text, ref_audio]
+#             )
+#
+#             with gr.Row():
+#                 txt_info_gpu = gr.Textbox("", label="Inference on Device :")
+#                 seed_info = gr.Textbox(label="Used Random Seed :")
+#                 check_button_infer = gr.Button("Inference")
+#
+#             gen_audio = gr.Audio(label="Generated Audio", type="filepath")
+#
+#             check_button_infer.click(
+#                 fn=infer,
+#                 inputs=[
+#                     cm_project,
+#                     cm_checkpoint,
+#                     exp_name,
+#                     ref_text,
+#                     ref_audio,
+#                     gen_text,
+#                     nfe_step,
+#                     ch_use_ema,
+#                     speed,
+#                     seed,
+#                     remove_silence,
+#                 ],
+#                 outputs=[gen_audio, txt_info_gpu, seed_info],
+#             )
+#
+#             bt_checkpoint_refresh.click(fn=get_checkpoints_project, inputs=[cm_project], outputs=[cm_checkpoint])
+#             cm_project.change(fn=get_checkpoints_project, inputs=[cm_project], outputs=[cm_checkpoint])
 
         with gr.TabItem("Prune Checkpoint"):
             gr.Markdown("""```plaintext 
