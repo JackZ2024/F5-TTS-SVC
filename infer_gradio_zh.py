@@ -1877,9 +1877,10 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                                               js="(v)=>{ setStorage('exclamation_pause',v) }")
                     number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
 
-            audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True, waveform_options={
-                "sample_rate": 24000
-            })
+            audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True,
+                                    autoplay=True, waveform_options={
+                    "sample_rate": 24000
+                })
             download_output = gr.File(label="下载文件", file_count="multiple")
 
             language.change(
