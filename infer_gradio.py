@@ -96,7 +96,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             break
     if model_dict is None:
         print("指定的模型不存在")
-        return None
+        return None,None
 
     # model_dict
     ckpt_path = model_dict["model"]
@@ -116,7 +116,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             if password == "":
                 print("密码为空，请设置解压密码")
                 gr.Warning("密码为空，请设置解压密码")
-                return None
+                return None,None
             try:
                 show_info("解压模型中……")
                 with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
@@ -125,7 +125,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             except Exception as e:
                 print(str(e))
                 show_info("模型解压失败")
-                return None
+                return None,None
 
             # 获取model路径
             model_folder = download_folder + "/" + model_name
@@ -139,7 +139,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
 
         if not os.path.exists(vocab_path):
             print("模型不存在")
-            return None
+            return None,None
 
     if model_cfg is None:
         if "v1" in os.path.basename(ckpt_path).lower():
@@ -156,7 +156,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
         custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
         pre_custom_path = ckpt_path
 
-    return custom_ema_model
+    return custom_ema_model, model_folder
 
 
 def load_F5_models_from_csv():
@@ -975,7 +975,7 @@ def infer(
         lang_alone = language[:index]
 
     show_info("加载模型……")
-    ema_model = load_custom(model_name, language, password)
+    ema_model, model_folder = load_custom(model_name, language, password)
     if ema_model is None:
         gr.Warning("模型加载失败")
         infer_running = False
@@ -1110,7 +1110,7 @@ def infer(
                     nfe_step=nfe_step,
                     speed=speed,
                     show_info=show_info,
-                    ft_vocos="LukeJacob2023/vocos-mel-ne-ft" if "manoz" in ref_audio.lower() else None
+                    ft_vocos=os.path.join(model_folder, "vocos") if os.path.exists(os.path.join(model_folder, "vocos", "pytorch_model.bin")) else None
                 )
 
             if stop_infer:

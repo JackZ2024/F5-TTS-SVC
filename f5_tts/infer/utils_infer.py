@@ -437,6 +437,28 @@ def infer_process(
 
 
 # infer batches
+custom_vocos_map = {}
+
+
+def vocos_from_model_folder(model_folder):
+    global custom_vocos_map
+    if model_folder in custom_vocos_map:
+        return custom_vocos_map[model_folder]
+    else:
+        config_path = os.path.join(model_folder, "config.yaml")
+        model_path = os.path.join(model_folder, "pytorch_model.bin")
+        model = cls.from_hparams(config_path)
+        state_dict = torch.load(model_path, map_location="cpu")
+        if isinstance(model.feature_extractor, EncodecFeatures):
+            encodec_parameters = {
+                "feature_extractor.encodec." + key: value
+                for key, value in model.feature_extractor.encodec.state_dict().items()
+            }
+            state_dict.update(encodec_parameters)
+        model.load_state_dict(state_dict)
+        model.eval()
+        custom_vocos_map[model_folder] = model
+        return model
 
 
 def infer_batch_process(
@@ -514,8 +536,10 @@ def infer_batch_process(
             generated = generated.permute(0, 2, 1)
             if mel_spec_type == "vocos":
                 if ft_vocos is not None:
-                    print("use finetune vocos: " + ft_vocos)
-                    generated_wave = Vocos.from_pretrained(ft_vocos).eval().to(device).decode(generated)
+                    if os.path.isdir(ft_vocos):
+                        generated_wave = vocos_from_model_folder(ft_vocos).eval().to(device).decode(generated)
+                    else:  # huggingface repo
+                        generated_wave = Vocos.from_pretrained(ft_vocos).eval().to(device).decode(generated)
                 else:
                     generated_wave = vocoder.decode(generated)
             elif mel_spec_type == "bigvgan":

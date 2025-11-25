@@ -7,6 +7,7 @@ import subprocess  # For invoking ffprobe
 import sys
 from contextlib import contextmanager
 
+from cached_path import cached_path
 
 sys.path.append(os.getcwd())
 
@@ -23,7 +24,7 @@ from tqdm import tqdm
 from f5_tts.model.utils import convert_char_to_pinyin
 
 
-PRETRAINED_VOCAB_PATH = files("f5_tts").joinpath("../../data/Emilia_ZH_EN_pinyin/vocab.txt")
+PRETRAINED_VOCAB_PATH = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
 
 
 def is_csv_wavs_format(input_dataset_dir):

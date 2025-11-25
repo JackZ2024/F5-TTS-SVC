@@ -7,13 +7,13 @@ pydantic==2.10.6
 ema_pytorch>=0.5.2
 gradio>=3.45.2
 # hydra-core>=1.3.0
-jieba
+jieba==0.42.1
 # librosa
 # matplotlib
 # nltk
 numpy<=1.26.4
 # pydub
-pypinyin
+pypinyin==0.55.0
 # safetensors
 # soundfile
 # tomli
