@@ -4,6 +4,8 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
+from vocos.feature_extractors import EncodecFeatures
+
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # for MPS device compatibility
 sys.path.append(f"{os.path.dirname(os.path.abspath(__file__))}/../../third_party/BigVGAN/")
 
@@ -447,7 +449,7 @@ def vocos_from_model_folder(model_folder):
     else:
         config_path = os.path.join(model_folder, "config.yaml")
         model_path = os.path.join(model_folder, "pytorch_model.bin")
-        model = cls.from_hparams(config_path)
+        model = Vocos.from_hparams(config_path)
         state_dict = torch.load(model_path, map_location="cpu")
         if isinstance(model.feature_extractor, EncodecFeatures):
             encodec_parameters = {
