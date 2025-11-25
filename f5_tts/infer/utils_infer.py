@@ -458,6 +458,7 @@ def vocos_from_model_folder(model_folder):
         model.load_state_dict(state_dict)
         model.eval()
         custom_vocos_map[model_folder] = model
+        print("use custom vocos:" + model_folder)
         return model
 
 
