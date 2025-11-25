@@ -156,7 +156,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
         custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path, use_ema=True)
         pre_custom_path = ckpt_path
 
-    return custom_ema_model, model_folder
+    return custom_ema_model, pathlib.Path(ckpt_path).parent
 
 
 def load_F5_models_from_csv():
