@@ -56,3 +56,5 @@ torchfcpe
 
 # RVC
 pyworld
+
+faster_whisper==1.2.0
