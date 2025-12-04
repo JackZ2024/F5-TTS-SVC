@@ -8,7 +8,6 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 import huggingface_hub
-import stable_whisper
 from faster_whisper import WhisperModel
 
 if TYPE_CHECKING:
@@ -118,9 +117,9 @@ class WhisperModelManager:
 
     def _load_fn(self, model_id: str) -> WhisperModel:
         if os.path.exists(model_id):
-            return stable_whisper.load_faster_whisper(model_id)
+            return WhisperModel(model_id)
         else:
-            return stable_whisper.load_faster_whisper(self.download_model(model_id))
+            return WhisperModel(self.download_model(model_id))
 
     def _handle_model_unload(self, model_name: str) -> None:
         with self._lock:
