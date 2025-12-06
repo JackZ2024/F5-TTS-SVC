@@ -182,7 +182,7 @@ dict_loaded = False
 
 
 # 中文混合输入转拼音，汉字可以混入拼音
-def convert_zh_mix_char_to_pinyin(text_list, pinyin_dict_path, polyphone=True):
+def convert_zh_mix_char_to_pinyin(text_list, pinyin_dict_path=None, polyphone=True):
     if jieba.dt.initialized is False:
         jieba.default_logger.setLevel(50)  # CRITICAL
         jieba.initialize()
