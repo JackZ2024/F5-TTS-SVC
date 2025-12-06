@@ -4,8 +4,6 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from vocos.feature_extractors import EncodecFeatures
-
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # for MPS device compatibility
 sys.path.append(f"{os.path.dirname(os.path.abspath(__file__))}/../../third_party/BigVGAN/")
 
@@ -404,7 +402,8 @@ def infer_process(
         fix_duration=fix_duration,
         device=device,
         no_ref_audio=False,
-        ft_vocos=None
+        ft_vocos=None,
+        pinyin_dict_path=None,
 ):
     # Split the input text into batches
     audio, sr = torchaudio.load(ref_audio)
@@ -433,7 +432,8 @@ def infer_process(
             fix_duration=fix_duration,
             device=device,
             no_ref_audio=no_ref_audio,
-            ft_vocos=ft_vocos
+            ft_vocos=ft_vocos,
+            pinyin_dict_path=pinyin_dict_path
         )
     )
 
@@ -449,7 +449,7 @@ def vocos_from_model_folder(model_folder):
     else:
         config_path = os.path.join(model_folder, "config.yaml")
         model_path = os.path.join(model_folder, "pytorch_model.bin")
-        model = Vocos.from_hparams(config_path)
+        model = cls.from_hparams(config_path)
         state_dict = torch.load(model_path, map_location="cpu")
         if isinstance(model.feature_extractor, EncodecFeatures):
             encodec_parameters = {
@@ -460,7 +460,6 @@ def vocos_from_model_folder(model_folder):
         model.load_state_dict(state_dict)
         model.eval()
         custom_vocos_map[model_folder] = model
-        print("use custom vocos:" + model_folder)
         return model
 
 
@@ -483,7 +482,8 @@ def infer_batch_process(
         streaming=False,
         chunk_size=2048,
         no_ref_audio=False,
-        ft_vocos=None
+        ft_vocos=None,
+        pinyin_dict_path=None
 ):
     audio, sr = ref_audio
     if audio.shape[0] > 1:
@@ -510,7 +510,7 @@ def infer_batch_process(
 
         # Prepare the text
         text_list = [ref_text + gen_text]
-        final_text_list = convert_char_to_pinyin(text_list)
+        final_text_list = convert_char_to_pinyin(text_list, pinyin_dict_path)
 
         ref_audio_len = audio.shape[-1] // hop_length
         if fix_duration is not None:

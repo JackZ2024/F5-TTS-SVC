@@ -182,7 +182,7 @@ dict_loaded = False
 
 
 # 中文混合输入转拼音，汉字可以混入拼音
-def convert_zh_mix_char_to_pinyin(text_list, polyphone=True):
+def convert_zh_mix_char_to_pinyin(text_list, pinyin_dict_path, polyphone=True):
     if jieba.dt.initialized is False:
         jieba.default_logger.setLevel(50)  # CRITICAL
         jieba.initialize()
@@ -191,7 +191,10 @@ def convert_zh_mix_char_to_pinyin(text_list, polyphone=True):
     if not dict_loaded:
         dict_loaded = True
 
-        pypinyin_dict_file = str(files("f5_tts").joinpath(f"dicts/pypinyin.txt"))
+        if pinyin_dict_path and os.path.exists(pinyin_dict_path):    # 推理的时候放在权重文件夹指定
+            pypinyin_dict_file = pinyin_dict_path
+        else:                                                        # 微调的时候放在固定dicts文件夹
+            pypinyin_dict_file = str(files("f5_tts").joinpath(f"dicts/pypinyin.txt"))
         if os.path.exists(pypinyin_dict_file):
             print(f"加载pypinyin词典{pypinyin_dict_file}")
             load_phrases_dict(load_pypinyin_dict_file(pypinyin_dict_file))
@@ -268,9 +271,9 @@ def convert_zh_mix_char_to_pinyin(text_list, polyphone=True):
     return final_text_list
 
 
-def convert_char_to_pinyin(text_list, polyphone=True):
+def convert_char_to_pinyin(text_list, pinyin_dict_path=None, polyphone=True):
     if any(is_chinese(c) for c in text_list[0]):
-        return convert_zh_mix_char_to_pinyin(text_list)
+        return convert_zh_mix_char_to_pinyin(text_list, pinyin_dict_path)
 
     if jieba.dt.initialized is False:
         jieba.default_logger.setLevel(50)  # CRITICAL

@@ -148,7 +148,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
         custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
         pre_custom_path = ckpt_path
 
-    return custom_ema_model
+    return custom_ema_model, os.path.join(os.path.dirname(ckpt_path), "pypinyin.txt")
 
 
 def load_F5_models_from_csv():
@@ -1192,7 +1192,7 @@ def infer(
         lang_alone = language[:index]
 
     show_info("加载模型……")
-    ema_model = load_custom(model_name, language, password)
+    ema_model, pinyin_path = load_custom(model_name, language, password)
     if ema_model is None:
         gr.Warning("模型加载失败")
         return gr.update(), [], used_seed
@@ -1314,7 +1314,8 @@ def infer(
             speed=speed,
             show_info=show_info,
             no_ref_audio=no_ref_audio,
-            cfg_strength=cfg_strength
+            cfg_strength=cfg_strength,
+            pinyin_dict_path=pinyin_path if os.path.exists(pinyin_path) else None
             # progress=gr.Progress(),
             # lang=lang,
         )
