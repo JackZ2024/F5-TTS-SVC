@@ -13,7 +13,7 @@ jieba==0.42.1
 # nltk
 numpy<=1.26.4
 # pydub
-pypinyin==0.54.0
+pypinyin==0.55.0
 # safetensors
 # soundfile
 # tomli
