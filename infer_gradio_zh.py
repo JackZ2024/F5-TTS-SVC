@@ -16,6 +16,7 @@ import zipfile
 import click
 import gdown
 import gradio as gr
+import librosa
 import numpy as np
 import py7zr
 import soundfile as sf
@@ -1319,6 +1320,9 @@ def infer(
             # progress=gr.Progress(),
             # lang=lang,
         )
+        # 直接输入48000的，方便后期剪辑
+        final_wave = librosa.resample(final_wave, orig_sr=final_sample_rate, target_sr=48000)
+        final_sample_rate = 48000
 
         generated_waves.append(final_wave)
         spectrograms.append(combined_spectrogram)
@@ -1880,7 +1884,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
 
             audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True,
                                     autoplay=True, waveform_options={
-                    "sample_rate": 24000
+                    "sample_rate": 48000
                 })
             download_output = gr.File(label="下载文件", file_count="multiple")
 
