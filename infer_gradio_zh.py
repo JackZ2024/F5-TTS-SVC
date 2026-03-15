@@ -1447,7 +1447,7 @@ def get_pinyin(*input_texts):
     return convert_zh_mix_char_to_pinyin([input_texts[0]])[0]
 
 
-with gr.Blocks(title="F5-TTS-SVC_v3") as app:
+with gr.Blocks(title="TT-SVC_v3") as app:
     #     gr.Markdown(
     #         """
     # # 自定义 F5 TTS + SVC
@@ -1687,7 +1687,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
         def_lang = ""
 
     with gr.Tabs():
-        with gr.TabItem("F5-TTS + SVC"):
+        with gr.TabItem("TT"):
             with gr.Row():
                 # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
                 language = gr.Dropdown(
@@ -1732,7 +1732,7 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
             textboxes = []
 
             # 创建一个动态布局，最多 20 个输入框
-            for i in range(4):  # 每行最多 5 个，4 行总共 20 个
+            for i in range(1):  # 每行最多 5 个，4 行总共 20 个
                 with gr.Row() as row:
                     for j in range(max_per_row):
                         index = i * max_per_row + j
@@ -1754,133 +1754,136 @@ with gr.Blocks(title="F5-TTS-SVC_v3") as app:
                 download_all = gr.Button("下载音频", variant="primary")
                 stop_btn = gr.Button("Stop", variant="primary")
 
-            with gr.Accordion("高级设置", open=False):
-                gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
-                with gr.Row(equal_height=True):
-                    basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
-                    basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
-                    with gr.Column():
-                        basic_ref_text_input = gr.Textbox(
-                            label="参考音频对应文本",
-                            lines=2,
-                            value=def_txt,
-                        )
-                        cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
-
-                    basic_ref_audio_user.upload(
-                        fn=transcribe_audio,
-                        inputs=basic_ref_audio_user,
-                        outputs=basic_ref_text_input
+            # with gr.Accordion("高级设置", open=False):
+                # gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
+            with gr.Row(equal_height=True):
+                basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
+                basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
+                with gr.Column():
+                    basic_ref_text_input = gr.Textbox(
+                        label="参考音频对应文本",
+                        lines=2,
+                        value=def_txt,
                     )
+                    cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
 
-                    basic_ref_audio_user.clear(
-                        fn=clear_audio,
-                        inputs=None,
-                        outputs=basic_ref_text_input
-                    )
-                modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
-                with gr.Row(visible=False):
-                    enable_svc = gr.Checkbox(
-                        label="启用音频转换",
-                        info="勾选此项，启动音频转换。",
-                        value=False,
-                    )
-
-                    svc_type = gr.Dropdown(
-                        choices=svc_type_list,
-                        value=def_svc_type,
-                        label="音频转换类型选择",
-                        visible=True,
-                    )
-
-                    svc_model = gr.Dropdown(
-                        choices=speaker_models,
-                        value=speaker_model,
-                        label="音频转换音色选择",
-                        visible=True,
-                    )
-
-                    password_input = gr.Textbox(
-                        label="解压密码:",
-                        type="password",
-                        lines=1,
-                        value="",
-                    )
-
-                speed_slider = gr.Slider(
-                    label="语速设置",
-                    minimum=0.3,
-                    maximum=2.0,
-                    value=get_speed(def_model),
-                    step=0.1,
-                    info="调整音频语速",
+                basic_ref_audio_user.upload(
+                    fn=transcribe_audio,
+                    inputs=basic_ref_audio_user,
+                    outputs=basic_ref_text_input
                 )
-                cfg_slider = gr.Slider(
-                    label="参考强度设置",
-                    minimum=0.0,
-                    maximum=10.0,
-                    value=2.0,
-                    step=0.1,
-                    info="值越大越像参考，值越小随机性越大",
+
+                basic_ref_audio_user.clear(
+                    fn=clear_audio,
+                    inputs=None,
+                    outputs=basic_ref_text_input
                 )
-                nfe_slider = gr.Slider(
-                    label="NFE Steps",
-                    minimum=4,
-                    maximum=64,
-                    value=32,
-                    step=2,
-                    info="Set the number of denoising steps.",
+            modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
+            with gr.Row(visible=False):
+                enable_svc = gr.Checkbox(
+                    label="启用音频转换",
+                    info="勾选此项，启动音频转换。",
+                    value=False,
                 )
-                cross_fade_duration_slider = gr.Slider(
-                    label="Cross-Fade Duration (s)",
-                    minimum=0.0,
-                    maximum=1.0,
-                    value=0.15,
-                    step=0.01,
-                    info="设置两个片段之前的静音时长",
+
+                svc_type = gr.Dropdown(
+                    choices=svc_type_list,
+                    value=def_svc_type,
+                    label="音频转换类型选择",
+                    visible=True,
                 )
-                with gr.Row():
-                    randomize_seed = gr.Checkbox(
-                        label="随机种子",
-                        info="勾选此项，每次会自动生成随机值",
-                        value=True,
-                        scale=1,
-                    )
-                    seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
-                    remove_silence = gr.Checkbox(
-                        label="删除静音",
-                        info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
-                        value=True,
-                    )
-                    save_line_audio = gr.Checkbox(
-                        label="按行保存音频",
-                        info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
-                        value=False,
-                        visible=False
-                    )
-                    insert_punct_in_space = gr.Checkbox(
-                        label="插入标点",
-                        info="此功能针对泰语，在空格处插入逗号",
-                        value=False,
-                        visible=False
-                    )
-                with gr.Row(visible=False):
-                    cb_auto_pause = gr.Checkbox(
-                        label="标点自动间距",
-                        value=False
-                    )
-                    number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
-                    number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
-                    number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
-                    number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
-                    number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
-                    cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
-                    number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
-                    number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
-                    number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
-                    number_exclamation.change(None, number_exclamation, None,
-                                              js="(v)=>{ setStorage('exclamation_pause',v) }")
-                    number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
+
+                svc_model = gr.Dropdown(
+                    choices=speaker_models,
+                    value=speaker_model,
+                    label="音频转换音色选择",
+                    visible=True,
+                )
+
+                password_input = gr.Textbox(
+                    label="解压密码:",
+                    type="password",
+                    lines=1,
+                    value="",
+                )
+
+            speed_slider = gr.Slider(
+                label="语速设置",
+                minimum=0.3,
+                maximum=2.0,
+                value=get_speed(def_model),
+                step=0.1,
+                info="调整音频语速",
+            )
+            cfg_slider = gr.Slider(
+                label="参考强度设置",
+                minimum=0.0,
+                maximum=10.0,
+                value=2.0,
+                step=0.1,
+                info="值越大越像参考，值越小随机性越大",
+                visible=False
+            )
+            nfe_slider = gr.Slider(
+                label="NFE Steps",
+                minimum=4,
+                maximum=64,
+                value=32,
+                step=2,
+                info="Set the number of denoising steps.",
+                visible=False
+            )
+            cross_fade_duration_slider = gr.Slider(
+                label="Cross-Fade Duration (s)",
+                minimum=0.0,
+                maximum=1.0,
+                value=0.15,
+                step=0.01,
+                info="设置两个片段之前的静音时长",
+                visible=False
+            )
+            with gr.Row(visible=False):
+                randomize_seed = gr.Checkbox(
+                    label="随机种子",
+                    info="勾选此项，每次会自动生成随机值",
+                    value=True,
+                    scale=1,
+                )
+                seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
+                remove_silence = gr.Checkbox(
+                    label="删除静音",
+                    info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
+                    value=True,
+                )
+                save_line_audio = gr.Checkbox(
+                    label="按行保存音频",
+                    info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
+                    value=False,
+                    visible=False
+                )
+                insert_punct_in_space = gr.Checkbox(
+                    label="插入标点",
+                    info="此功能针对泰语，在空格处插入逗号",
+                    value=False,
+                    visible=False
+                )
+            with gr.Row(visible=False):
+                cb_auto_pause = gr.Checkbox(
+                    label="标点自动间距",
+                    value=False
+                )
+                number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
+                number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
+                number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
+                number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
+                number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
+                cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
+                number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
+                number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
+                number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
+                number_exclamation.change(None, number_exclamation, None,
+                                          js="(v)=>{ setStorage('exclamation_pause',v) }")
+                number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
 
             audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True,
                                     autoplay=True, waveform_options={
