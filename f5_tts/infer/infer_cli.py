@@ -190,6 +190,11 @@ parser.add_argument(
     type=str,
     help="Finetune vocos huggingface repo id",
 )
+parser.add_argument(
+    "--pinyin_dict_path",
+    type=str,
+    help="pinyin dict path",
+)
 args = parser.parse_args()
 
 
@@ -241,6 +246,7 @@ fix_duration = args.fix_duration or config.get("fix_duration", fix_duration)
 device = args.device or config.get("device", device)
 no_ref_audio = args.no_ref_audio
 ft_vocos = args.ft_vocos
+pinyin_dict_path = args.pinyin_dict_path
 
 
 # patches for pip pkg user
@@ -364,7 +370,8 @@ def main():
             fix_duration=fix_duration,
             device=device,
             no_ref_audio=no_ref_audio,
-            ft_vocos=ft_vocos
+            ft_vocos=ft_vocos,
+            pinyin_dict_path=pinyin_dict_path
         )
         generated_audio_segments.append(audio_segment)
 
