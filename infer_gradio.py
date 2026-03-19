@@ -24,7 +24,6 @@ import csv
 import py7zr
 import pathlib
 import gc
-import math
 
 import wget
 import yaml
@@ -1072,21 +1071,21 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
         file_name = pathlib.Path(audio_filepath).stem
         if svc_type == "Sovits":
             sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
-            converted_filepath = convert_audio_path + f"/{file_name}_sovits_{tone_shift}.wav"
+            converted_filepath = convert_audio_path + f"/{file_name}_{lang_alone}_sovits_{svc_model}_{tone_shift}.wav"
             sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
             svc_files.append(converted_filepath)
         elif svc_type == "Applio":
             sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                              tone_shift)
             if audio_wave is not None:
-                converted_filepath = convert_audio_path + f"/{file_name}_applio_{tone_shift}_{rvc_index_rate}.wav"
+                converted_filepath = convert_audio_path + f"/{file_name}_{lang_alone}_applio_{svc_model}_{tone_shift}_{rvc_index_rate}.wav"
                 sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
                 svc_files.append(converted_filepath)
         elif svc_type == "RVC":
             sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                           tone_shift, True)
             if audio_wave is not None:
-                converted_filepath = convert_audio_path + f"/{file_name}_rvc_{tone_shift}_{rvc_index_rate}.wav"
+                converted_filepath = convert_audio_path + f"/{file_name}_{lang_alone}_rvc_{svc_model}_{tone_shift}_{rvc_index_rate}.wav"
                 sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_24')
                 svc_files.append(converted_filepath)
 
@@ -1503,12 +1502,10 @@ def load_ref_txt(ref_txt_path):
     return txt
 
 
-with gr.Blocks(title="F5-TTS-SVC_v4") as app:
+with gr.Blocks(title="TTS-SVC_v5") as app:
     gr.Markdown(
         """
-# 自定义 F5 TTS + SVC
-
-F5-TTS + SOVITS + Applio + RVC
+# 自定义 TTS + SVC
 
 """
     )
@@ -1681,7 +1678,7 @@ F5-TTS + SOVITS + Applio + RVC
         def_lang = ""
 
     with gr.Tabs():
-        with gr.TabItem("F5-TTS + SVC"):
+        with gr.TabItem("TTS + SVC"):
             with gr.Row():
                 # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
                 language = gr.Dropdown(
@@ -1754,7 +1751,7 @@ F5-TTS + SOVITS + Applio + RVC
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载所有输出音频", variant="primary")
-                stop_btn = gr.Button("停止", variant="primary")
+                # stop_btn = gr.Button("停止", variant="primary")
                 
             update_running_status_timer = gr.Timer(1)
             update_running_status_timer.tick(update_running_status, inputs=None, outputs=[running_info, generate_btn])
@@ -1804,7 +1801,7 @@ F5-TTS + SOVITS + Applio + RVC
                     label="NFE Steps",
                     minimum=4,
                     maximum=64,
-                    value=64,
+                    value=32,
                     step=2,
                     info="Set the number of denoising steps.",
                 )
@@ -1947,9 +1944,9 @@ F5-TTS + SOVITS + Applio + RVC
                 outputs=textbox,
             )
             
-            stop_btn.click(
-                stop_infer_btn
-            )
+            # stop_btn.click(
+            #     stop_infer_btn
+            # )
 
             list_generated_btn.click(
                 list_generated_audios,
