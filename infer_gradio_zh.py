@@ -16,6 +16,7 @@ import zipfile
 import click
 import gdown
 import gradio as gr
+import librosa
 import numpy as np
 import py7zr
 import soundfile as sf
@@ -1317,6 +1318,9 @@ def infer(
             # progress=gr.Progress(),
             # lang=lang,
         )
+        # 直接输入48000的，方便后期剪辑
+        final_wave = librosa.resample(final_wave, orig_sr=final_sample_rate, target_sr=48000)
+        final_sample_rate = 48000
 
         generated_waves.append(final_wave)
         spectrograms.append(combined_spectrogram)
@@ -1681,7 +1685,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
         def_lang = ""
 
     with gr.Tabs():
-        with gr.TabItem("TT + SVC"):
+        with gr.TabItem("TT"):
             with gr.Row():
                 # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
                 language = gr.Dropdown(
@@ -1749,7 +1753,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                 stop_btn = gr.Button("Stop", variant="primary")
 
             # with gr.Accordion("高级设置", open=False):
-            #     gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
+            # gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
             with gr.Row(equal_height=True):
                 basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
                 basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
@@ -1881,7 +1885,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
 
             audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True,
                                     autoplay=True, waveform_options={
-                    "sample_rate": 24000
+                    "sample_rate": 48000
                 })
             download_output = gr.File(label="下载文件", file_count="multiple")
 
@@ -2249,7 +2253,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                    						       globalThis.getStorage = (key, value)=>{
                    						        return JSON.parse(localStorage.getItem(key))
                    						      }
-                   						      
+
                    						       var modifyWords = getStorage('modifyWords')
                    						       const auto_pause = getStorage('auto_pause')
                    						       const comma_pause = getStorage('comma_pause') || '1.0'
