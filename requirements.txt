@@ -53,7 +53,7 @@ noisereduce
 pedalboard
 torchcrepe==0.0.23
 torchfcpe
-
+cyrtranslit
 # RVC
 pyworld
 

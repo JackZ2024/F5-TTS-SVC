@@ -14,6 +14,7 @@ import zipfile
 import traceback
 
 import click
+import cyrtranslit
 import gradio as gr
 import numpy as np
 import soundfile as sf
@@ -993,7 +994,8 @@ def infer(
 
         elif "泰语-sit-男-5" in model_name:
             gen_text = process_thai_repeat(replace_numbers_with_thai(gen_text))
-
+        if "塞尔" in lang_alone or "塞语" in lang_alone:
+            gen_text = cyrtranslit.to_cyrillic(gen_text, 'sr')
         all_gen_text_list.append(gen_text)
 
     if len(all_gen_text_list) == 0:
@@ -1267,12 +1269,12 @@ def load_ref_txt(ref_txt_path):
     return txt
 
 
-with gr.Blocks(title="F5-TTS-SVC_v4") as app:
+with gr.Blocks(title="TT-SVC_v4") as app:
     gr.Markdown(
         """
 # 自定义 F5 TTS + SVC
 
-F5-TTS + SOVITS + RVC
+TT + SOVITS + RVC
 
 """
     )
@@ -1433,7 +1435,7 @@ F5-TTS + SOVITS + RVC
         def_lang = ""
 
     with gr.Tabs():
-        with gr.TabItem("F5-TTS + SVC"):
+        with gr.TabItem("TT + SVC"):
             with gr.Row():
                 # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
                 language = gr.Dropdown(
