@@ -97,7 +97,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             break
     if model_dict is None:
         print("指定的模型不存在")
-        return None,None
+        return None, None
 
     # model_dict
     ckpt_path = model_dict["model"]
@@ -117,7 +117,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             if password == "":
                 print("密码为空，请设置解压密码")
                 gr.Warning("密码为空，请设置解压密码")
-                return None,None
+                return None, None
             try:
                 show_info("解压模型中……")
                 with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
@@ -126,7 +126,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             except Exception as e:
                 print(str(e))
                 show_info("模型解压失败")
-                return None,None
+                return None, None
 
             # 获取model路径
             model_folder = download_folder + "/" + model_name
@@ -140,7 +140,7 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
 
         if not os.path.exists(vocab_path):
             print("模型不存在")
-            return None,None
+            return None, None
 
     if model_cfg is None:
         if "v1" in os.path.basename(ckpt_path).lower():
@@ -944,6 +944,7 @@ def infer(
         svc_model="",
         tone_shift=0,
         rvc_index_rate=0.75,
+        no_ref_audio=False
 ):
     if not ref_audio_orig:
         gr.Warning("Please provide reference audio.")
@@ -1114,7 +1115,9 @@ def infer(
                     nfe_step=nfe_step,
                     speed=speed,
                     show_info=show_info,
-                    ft_vocos=os.path.join(model_folder, "vocos") if os.path.exists(os.path.join(model_folder, "vocos", "pytorch_model.bin")) else None
+                    ft_vocos=os.path.join(model_folder, "vocos") if os.path.exists(
+                        os.path.join(model_folder, "vocos", "pytorch_model.bin")) else None,
+                    no_ref_audio=no_ref_audio,
                 )
 
             if stop_infer:
@@ -1504,7 +1507,13 @@ TT + SOVITS + RVC
                 )
                 running_info = gr.Textbox(label="", value="", scale=1)
 
-            textbox = gr.Textbox(label=f"生成文本:", lines=10, visible=True)
+            with gr.Row():
+                textbox = gr.Textbox(label=f"生成文本:", lines=10, visible=True)
+                basic_ref_audio_user = gr.Audio(label="自定义参考音频", sources=["upload"], type="filepath")
+                basic_ref_text_user = gr.Textbox(
+                    label="自定义参考音频文本",
+                    lines=2,
+                )
 
             with gr.Row():
                 clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
@@ -1522,8 +1531,6 @@ TT + SOVITS + RVC
                     lines=2,
                     value=def_txt,
                 )
-
-                modify_words_input = gr.Textbox(label="改词", lines=10)
 
                 with gr.Row():
                     randomize_seed = gr.Checkbox(
@@ -1548,6 +1555,8 @@ TT + SOVITS + RVC
                         info="此功能针对泰语，在空格处插入逗号",
                         value=False,
                     )
+                    cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
+
                 speed_slider = gr.Slider(
                     label="语速设置",
                     minimum=0.3,
@@ -1600,6 +1609,9 @@ TT + SOVITS + RVC
 
 
             def basic_tts(
+                    cb_no_ref,
+                    ref_audio_user,
+                    ref_text_user,
                     ref_audio_input,
                     ref_text_input,
                     language,
@@ -1619,23 +1631,17 @@ TT + SOVITS + RVC
                     tone_shift,
                     rvc_index_rate,
                     gen_texts_input,
-                    modify_words,
             ):
+                if ref_audio_user:
+                    ref_audio_input = ref_audio_user
+                if ref_text_user:
+                    ref_text_input = ref_text_user
+
                 if randomize_seed:
                     seed_input = np.random.randint(0, 2 ** 31 - 1)
                 try:
-                    if len(modify_words) > 0:
-                        gen_texts_input_modify = []
-                        for text in gen_texts_input:
-                            for modify in modify_words.split("\n"):
-                                parts = modify.split("\t")
-                                if len(parts) != 2:
-                                    continue
-                                else:
-                                    text = text.replace(parts[0], parts[1])
-                                    gen_texts_input_modify.append(text)
-                    else:
-                        gen_texts_input_modify = gen_texts_input
+
+                    gen_texts_input_modify = gen_texts_input
 
                     audio_out, gen_audio_list, used_seed = infer(
                         ref_audio_input,
@@ -1656,6 +1662,7 @@ TT + SOVITS + RVC
                         svc_model=svc_model,
                         tone_shift=tone_shift,
                         rvc_index_rate=rvc_index_rate,
+                        no_ref_audio=cb_no_ref
                     )
                     gc.collect()
                     torch.cuda.empty_cache()
@@ -1671,7 +1678,10 @@ TT + SOVITS + RVC
                     return gr.update(), [], 0
 
 
-            intputs = [ref_audio,
+            intputs = [cb_no_ref,
+                       basic_ref_audio_user,
+                       basic_ref_text_user,
+                       ref_audio,
                        basic_ref_text_input,
                        language,
                        custom_ckpt_path,
@@ -1690,7 +1700,6 @@ TT + SOVITS + RVC
                        tone_shift_slider,
                        rvc_index_rate_slider,
                        textbox,
-                       modify_words_input
                        ]
 
             generate_btn.click(
@@ -1899,7 +1908,7 @@ TT + SOVITS + RVC
                 }
             """)
 
-        modify_words_input.change(None, modify_words_input, None, js="(v)=>{ setStorage('modifyWords', v) }")
+        # modify_words_input.change(None, modify_words_input, None, js="(v)=>{ setStorage('modifyWords', v) }")
 
         js_get_local_storage = """
                    						    function() {
@@ -1913,12 +1922,12 @@ TT + SOVITS + RVC
                    						       return [modifyWords];
                    						      }
                    						    """
-        app.load(
-            None,
-            inputs=None,
-            outputs=[modify_words_input],
-            js=js_get_local_storage,
-        )
+        # app.load(
+        #     None,
+        #     inputs=None,
+        #     outputs=[modify_words_input],
+        #     js=js_get_local_storage,
+        # )
 
 
 @click.command()
