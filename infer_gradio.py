@@ -994,8 +994,10 @@ def infer(
 
         elif "泰语-sit-男-5" in model_name:
             gen_text = process_thai_repeat(replace_numbers_with_thai(gen_text))
-        if "塞尔" in lang_alone or "塞语" in lang_alone:
+
+        if "塞尔" in lang or "塞语" in lang:
             gen_text = cyrtranslit.to_cyrillic(gen_text, 'sr')
+            print("转换西里文")
         all_gen_text_list.append(gen_text)
 
     if len(all_gen_text_list) == 0:
@@ -1272,7 +1274,7 @@ def load_ref_txt(ref_txt_path):
 with gr.Blocks(title="TT-SVC_v4") as app:
     gr.Markdown(
         """
-# 自定义 F5 TTS + SVC
+# 自定义 TT + SVC
 
 TT + SOVITS + RVC
 
@@ -1558,7 +1560,7 @@ TT + SOVITS + RVC
                     label="NFE Steps",
                     minimum=4,
                     maximum=64,
-                    value=64,
+                    value=32,
                     step=2,
                     info="Set the number of denoising steps.",
                 )
