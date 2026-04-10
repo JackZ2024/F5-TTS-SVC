@@ -279,7 +279,6 @@ def is_chinese(c):
             "\u3100" <= c <= "\u9fff"  # common chinese characters
     )
 
-
 def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
     final_text_list = []
     custom_trans = str.maketrans({";": ",", "“": '', "”": '', "‘": "'", "’": "'"})
@@ -290,8 +289,49 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
     def split_by_brackets(text):
         """按尖括号分割字符串"""
         result = re.split(r'<|>', text)
-        # 过滤空字符串
         return [s for s in result if s]
+
+    def safe_convert_char_to_pinyin(text):
+        """
+        带缓冲区的安全转换：
+        1. 遇到 [单个空格] 拆分
+        2. 遇到 [连续2个及以上标点/空格] 拆分
+        3. 遇到 [单个非空格标点] 保留给 g2pw 提供多音字上下文
+        """
+        # 匹配所有的非汉字、非字母、非数字块（包括所有标点和空格）
+        pattern = r'([^\u4e00-\u9fa5a-zA-Z0-9]+)'
+        parts = re.split(pattern, text)
+
+        char_list = []
+        buffer = ""
+
+        for part in parts:
+            if not part:
+                continue
+
+            # 判断当前提取部分是否是标点/空格块
+            if re.match(pattern, part):
+                # 触发拆分条件：包含任何空格符(\s) 或 标点长度>=2
+                if re.search(r'\s', part) or len(part) >= 2:
+                    # 1. 先把缓冲槽里的正常文字送到底层模型转换
+                    if buffer:
+                        char_list.extend(convert_char_to_pinyin_sovits_f5([buffer])[0])
+                        buffer = ""  # 清空缓冲槽
+
+                    # 2. 将拆分出来的空格或连续标点直接打散成单字符加入
+                    char_list.extend(list(part))
+                else:
+                    # 单个标点（如逗号、句号），不触发断句，加入缓冲槽
+                    buffer += part
+            else:
+                # 正常的汉字/字母/数字，加入缓冲槽
+                buffer += part
+
+        # 循环结束，如果缓冲槽里还有剩下的文字，最后转换一次
+        if buffer:
+            char_list.extend(convert_char_to_pinyin_sovits_f5([buffer])[0])
+
+        return char_list
 
     def process_mixed_segment(text):
         """处理包含中文和拼音的混合文本段"""
@@ -299,8 +339,8 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
         parts = split_by_brackets(text)
         for part in parts:
             print("part:", part)
-            if any(is_chinese(c) for c in part):
-                char_list.extend(convert_char_to_pinyin_sovits_f5([part])[0])
+            if any(is_chinese(c) for c in part):  # 这里假设 is_chinese 是外部已定义的
+                char_list.extend(safe_convert_char_to_pinyin(part))
             else:
                 char_list.append(" ")
                 char_list.append(part)
@@ -309,15 +349,12 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
     for text in text_list:
         text = text.translate(custom_trans)
 
-        # 检查文本是否包含带声调的拼音
         has_pinyin = has_toned_pinyin(text)
 
         if has_pinyin:
-            # 检测到带声调拼音，将所有单词都当作拼音处理
             char_list = process_mixed_segment(text)
         else:
-            # 不包含拼音，使用原有逻辑
-            char_list = convert_char_to_pinyin_sovits_f5([text])[0]
+            char_list = safe_convert_char_to_pinyin(text)
 
         final_text_list.append(char_list)
 

@@ -1013,7 +1013,8 @@ def rvc_convert_audio(audio_filepath, model_path, index_path, rvc_index_rate, pi
                             split_audio)
 
 
-def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_rate, password, show_info=gr.Info):
+def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_rate, password, volume=1.0,
+                   show_info=gr.Info):
     if len(audios) == 0:
         gr.Warning("请添加转换音频")
         return []
@@ -1054,25 +1055,23 @@ def convert_audios(audios, language, svc_type, svc_model, tone_shift, rvc_index_
     progress = gr.Progress()
     for i, audio_filepath in enumerate(progress.tqdm(audios, desc="Processing")):
         file_name = pathlib.Path(audio_filepath).stem
+        audio_wave = None
+        sampling_rate = 48000
         if svc_type == "Sovits":
             sampling_rate, audio_wave = sovits_convert_audio(audio_filepath, model_path, speaker_path, tone_shift)
-            converted_filepath = convert_audio_path + f"/{file_name}_sovits_{tone_shift}.wav"
-            sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
-            svc_files.append(converted_filepath)
         elif svc_type == "Applio":
             sampling_rate, audio_wave = applio_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                              tone_shift)
-            if audio_wave is not None:
-                converted_filepath = convert_audio_path + f"/{file_name}_applio_{tone_shift}_{rvc_index_rate}.wav"
-                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
-                svc_files.append(converted_filepath)
         elif svc_type == "RVC":
             sampling_rate, audio_wave = rvc_convert_audio(audio_filepath, model_path, speaker_path, rvc_index_rate,
                                                           tone_shift, True)
-            if audio_wave is not None:
-                converted_filepath = convert_audio_path + f"/{file_name}_rvc_{tone_shift}_{rvc_index_rate}.wav"
-                sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
-                svc_files.append(converted_filepath)
+
+        if audio_wave is not None:
+            if volume != 1.0:
+                audio_wave = audio_wave * volume
+            converted_filepath = convert_audio_path + f"/{file_name}_{svc_type.lower()}_{tone_shift}_{rvc_index_rate}.wav"
+            sf.write(converted_filepath, audio_wave, sampling_rate, 'PCM_32')
+            svc_files.append(converted_filepath)
 
     return svc_files
 
@@ -1157,6 +1156,7 @@ def infer(
         cross_fade_duration=0.15,
         nfe_step=32,
         speed=1,
+        volume=1,
         show_info=print,
         save_line_audio=False,
         insert_punct_in_space=False,
@@ -1411,8 +1411,9 @@ def infer(
         remove_silence_for_generated_wav(last_gen_audio_path)
         final_waves, _ = torchaudio.load(last_gen_audio_path)
         final_waves = final_waves.squeeze().cpu().numpy()
-    print("output_audio_list", output_audio_list)
-    # output_audio_list.extend(segm_audio_list)
+    if volume != 1.0:
+        final_waves = final_waves * volume
+
     return (final_sample_rate, final_waves), output_audio_list, used_seed
 
 
@@ -1804,15 +1805,38 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                     lines=1,
                     value="",
                 )
-
-            speed_slider = gr.Slider(
-                label="语速设置",
-                minimum=0.3,
-                maximum=2.0,
-                value=get_speed(def_model),
-                step=0.1,
-                info="调整音频语速",
-            )
+            with gr.Row():
+                speed_slider = gr.Slider(
+                    label="语速设置",
+                    minimum=0.3,
+                    maximum=2.0,
+                    value=get_speed(def_model),
+                    step=0.1,
+                    info="调整音频语速",
+                )
+                volume_slider = gr.Slider(
+                    label="音量调节",
+                    minimum=0.1,
+                    maximum=5.0,
+                    value=1.0,
+                    step=0.1,
+                    info="调整音频音量",
+                )
+                randomize_seed = gr.Checkbox(
+                    label="随机种子",
+                    info="勾选此项，每次会自动生成随机值",
+                    value=True,
+                    scale=1,
+                )
+                seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
+                nfe_slider = gr.Slider(
+                    label="运算步数",
+                    minimum=4,
+                    maximum=64,
+                    value=32,
+                    step=2,
+                    info="选择16步速度加倍，质量略降",
+                )
             cfg_slider = gr.Slider(
                 label="参考强度设置",
                 minimum=0.0,
@@ -1822,15 +1846,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                 info="值越大越像参考，值越小随机性越大",
                 visible=False
             )
-            nfe_slider = gr.Slider(
-                label="NFE Steps",
-                minimum=4,
-                maximum=64,
-                value=32,
-                step=2,
-                info="Set the number of denoising steps.",
-                visible=False
-            )
+
             cross_fade_duration_slider = gr.Slider(
                 label="Cross-Fade Duration (s)",
                 minimum=0.0,
@@ -1840,18 +1856,13 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                 info="设置两个片段之前的静音时长",
                 visible=False
             )
-            with gr.Row(visible=False):
-                randomize_seed = gr.Checkbox(
-                    label="随机种子",
-                    info="勾选此项，每次会自动生成随机值",
-                    value=True,
-                    scale=1,
-                )
-                seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
+            with gr.Row(visible=True):
+
                 remove_silence = gr.Checkbox(
                     label="删除静音",
                     info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
                     value=True,
+                    visible=False
                 )
                 save_line_audio = gr.Checkbox(
                     label="按行保存音频",
@@ -1929,6 +1940,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                     cross_fade_duration_slider,
                     nfe_slider,
                     speed_slider,
+                    volume_slider,
                     enable_svc,
                     svc_type,
                     svc_model,
@@ -1986,6 +1998,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                     cross_fade_duration=cross_fade_duration_slider,
                     nfe_step=nfe_slider,
                     speed=speed_slider,
+                    volume=volume_slider,
                     save_line_audio=save_line_audio,
                     insert_punct_in_space=insert_punct_in_space,
                     enable_svc=enable_svc,
@@ -2013,6 +2026,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                        cross_fade_duration_slider,
                        nfe_slider,
                        speed_slider,
+                       volume_slider,
                        enable_svc,
                        svc_type,
                        svc_model,
@@ -2196,6 +2210,14 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                     info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
                     interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
                 )
+                convert_volume_slider = gr.Slider(
+                    label="音量调节",
+                    minimum=0.0,
+                    maximum=2.0,
+                    value=1.0,
+                    step=0.1,
+                    info="调整音频音量",
+                )
             with gr.Row():
                 input_convert_audios = gr.File(label="转换音频", file_count="multiple")
                 output_audios = gr.File(label="输出音频", file_count="multiple")
@@ -2221,7 +2243,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
             convert_btn.click(
                 convert_audios,
                 inputs=[input_convert_audios, convert_language, convert_svc_type, convert_svc_model, \
-                        convert_tone_shift_slider, convert_index_rate_slider, convert_password],
+                        convert_tone_shift_slider, convert_index_rate_slider, convert_password, convert_volume_slider],
                 outputs=[output_audios],
             )
 
