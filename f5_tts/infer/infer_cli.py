@@ -12,6 +12,8 @@ import tomli
 from cached_path import cached_path
 from hydra.utils import get_class
 from omegaconf import OmegaConf
+from sanitize_filename import sanitize
+from unidecode import unidecode
 
 from f5_tts.infer.utils_infer import (
     cfg_strength,
@@ -84,6 +86,11 @@ parser.add_argument(
     help="The transcript/subtitle for the reference audio",
 )
 parser.add_argument(
+    "--ref_file",
+    type=str,
+    help="The transcript/subtitle file for the reference audio",
+)
+parser.add_argument(
     "-t",
     "--gen_text",
     type=str,
@@ -111,6 +118,16 @@ parser.add_argument(
     "--save_chunk",
     action="store_true",
     help="To save each audio chunks during inference",
+)
+parser.add_argument(
+    "--no_legacy_text",
+    action="store_false",
+    help="Not to use lossy ASCII transliterations of unicode text in saved file names.",
+)
+parser.add_argument(
+    "--no_ref_audio",
+    action="store_true",
+    help="Don't use ref audio as generate condition.",
 )
 parser.add_argument(
     "--remove_silence",
@@ -168,6 +185,16 @@ parser.add_argument(
     type=str,
     help="Specify the device to run on",
 )
+parser.add_argument(
+    "--ft_vocos",
+    type=str,
+    help="Finetune vocos huggingface repo id",
+)
+parser.add_argument(
+    "--pinyin_dict_path",
+    type=str,
+    help="pinyin dict path",
+)
 args = parser.parse_args()
 
 
@@ -188,6 +215,8 @@ ref_text = (
     if args.ref_text is not None
     else config.get("ref_text", "Some call me nature, others call me mother nature.")
 )
+if args.ref_file:
+    ref_text = open(args.ref_file, 'r', encoding='utf-8').read()
 gen_text = args.gen_text or config.get("gen_text", "Here we generate something just for test.")
 gen_file = args.gen_file or config.get("gen_file", "")
 
@@ -197,6 +226,12 @@ output_file = args.output_file or config.get(
 )
 
 save_chunk = args.save_chunk or config.get("save_chunk", False)
+use_legacy_text = args.no_legacy_text or config.get("no_legacy_text", False)  # no_legacy_text is a store_false arg
+if save_chunk and use_legacy_text:
+    print(
+        "\nWarning to --save_chunk: lossy ASCII transliterations of unicode text for legacy (.wav) file names, --no_legacy_text to disable.\n"
+    )
+
 remove_silence = args.remove_silence or config.get("remove_silence", False)
 load_vocoder_from_local = args.load_vocoder_from_local or config.get("load_vocoder_from_local", False)
 
@@ -209,6 +244,9 @@ sway_sampling_coef = args.sway_sampling_coef or config.get("sway_sampling_coef",
 speed = args.speed or config.get("speed", speed)
 fix_duration = args.fix_duration or config.get("fix_duration", fix_duration)
 device = args.device or config.get("device", device)
+no_ref_audio = args.no_ref_audio
+ft_vocos = args.ft_vocos
+pinyin_dict_path = args.pinyin_dict_path
 
 
 # patches for pip pkg user
@@ -265,18 +303,9 @@ if model != "F5TTS_Base":
     assert vocoder_name == model_cfg.model.mel_spec.mel_spec_type
 
 # override for previous models
-if model == "F5TTS_Base":
-    if vocoder_name == "vocos":
-        ckpt_step = 1200000
-    elif vocoder_name == "bigvgan":
-        model = "F5TTS_Base_bigvgan"
-        ckpt_type = "pt"
-elif model == "E2TTS_Base":
-    repo_name = "E2-TTS"
-    ckpt_step = 1200000
 
 if not ckpt_file:
-    ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{model}/model_{ckpt_step}.{ckpt_type}"))
+    ckpt_file = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
 
 print(f"Using {model}...")
 ema_model = load_model(
@@ -321,8 +350,10 @@ def main():
         text = re.sub(reg2, "", text)
         ref_audio_ = voices[voice]["ref_audio"]
         ref_text_ = voices[voice]["ref_text"]
+        local_speed = voices[voice].get("speed", speed)
         gen_text_ = text.strip()
         print(f"Voice: {voice}")
+        print("no_ref_audio", no_ref_audio)
         audio_segment, final_sample_rate, spectrogram = infer_process(
             ref_audio_,
             ref_text_,
@@ -335,17 +366,22 @@ def main():
             nfe_step=nfe_step,
             cfg_strength=cfg_strength,
             sway_sampling_coef=sway_sampling_coef,
-            speed=speed,
+            speed=local_speed,
             fix_duration=fix_duration,
             device=device,
+            no_ref_audio=no_ref_audio,
+            ft_vocos=ft_vocos,
+            pinyin_dict_path=pinyin_dict_path
         )
         generated_audio_segments.append(audio_segment)
 
         if save_chunk:
             if len(gen_text_) > 200:
                 gen_text_ = gen_text_[:200] + " ... "
+            if use_legacy_text:
+                gen_text_ = unidecode(gen_text_)
             sf.write(
-                os.path.join(output_chunk_dir, f"{len(generated_audio_segments) - 1}_{gen_text_}.wav"),
+                os.path.join(output_chunk_dir, sanitize(f"{len(generated_audio_segments) - 1}_{gen_text_}.wav")),
                 audio_segment,
                 final_sample_rate,
             )

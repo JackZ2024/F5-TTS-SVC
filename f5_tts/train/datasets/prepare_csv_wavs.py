@@ -7,6 +7,7 @@ import subprocess  # For invoking ffprobe
 import sys
 from contextlib import contextmanager
 
+from cached_path import cached_path
 
 sys.path.append(os.getcwd())
 
@@ -23,7 +24,7 @@ from tqdm import tqdm
 from f5_tts.model.utils import convert_char_to_pinyin
 
 
-PRETRAINED_VOCAB_PATH = files("f5_tts").joinpath("../../data/Emilia_ZH_EN_pinyin/vocab.txt")
+PRETRAINED_VOCAB_PATH = str(cached_path("hf://mrfakename/OpenF5-TTS-Base/vocab.txt"))
 
 
 def is_csv_wavs_format(input_dataset_dir):
@@ -208,11 +209,11 @@ def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set, is_fine
     out_dir.mkdir(exist_ok=True, parents=True)
     print(f"\nSaving to {out_dir} ...")
 
-    # Save dataset with improved batch size for better I/O performance
     raw_arrow_path = out_dir / "raw.arrow"
-    with ArrowWriter(path=raw_arrow_path.as_posix(), writer_batch_size=100) as writer:
+    with ArrowWriter(path=raw_arrow_path.as_posix()) as writer:
         for line in tqdm(result, desc="Writing to raw.arrow ..."):
             writer.write(line)
+        writer.finalize()
 
     # Save durations to JSON
     dur_json_path = out_dir / "duration.json"

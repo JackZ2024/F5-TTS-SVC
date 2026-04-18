@@ -162,16 +162,31 @@ class CFM(nn.Module):
             # at each step, conditioning is fixed
             # step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
 
-            # predict flow
-            pred = self.transformer(
-                x=x, cond=step_cond, text=text, time=t, mask=mask, drop_audio_cond=False, drop_text=False, cache=True
-            )
+            # predict flow (cond)
             if cfg_strength < 1e-5:
+                pred = self.transformer(
+                    x=x,
+                    cond=step_cond,
+                    text=text,
+                    time=t,
+                    mask=mask,
+                    drop_audio_cond=False,
+                    drop_text=False,
+                    cache=True,
+                )
                 return pred
 
-            null_pred = self.transformer(
-                x=x, cond=step_cond, text=text, time=t, mask=mask, drop_audio_cond=True, drop_text=True, cache=True
+            # predict flow (cond and uncond), for classifier-free guidance
+            pred_cfg = self.transformer(
+                x=x,
+                cond=step_cond,
+                text=text,
+                time=t,
+                mask=mask,
+                cfg_infer=True,
+                cache=True,
             )
+            pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
             return pred + (pred - null_pred) * cfg_strength
 
         # noise input
@@ -275,10 +290,9 @@ class CFM(nn.Module):
         else:
             drop_text = False
 
-        # if want rigorously mask out padding, record in collate_fn in dataset.py, and pass in here
-        # adding mask will use more memory, thus also need to adjust batchsampler with scaled down threshold for long sequences
+        # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
         pred = self.transformer(
-            x=φ, cond=cond, text=text, time=time, drop_audio_cond=drop_audio_cond, drop_text=drop_text
+            x=φ, cond=cond, text=text, time=time, drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask
         )
 
         # flow matching loss
