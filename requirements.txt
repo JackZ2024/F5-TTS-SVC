@@ -107,7 +107,6 @@ nvidia-nvshmem-cu12==3.3.20
 nvidia-nvtx-cu12==12.8.90
 omegaconf==2.3.0
 onnxruntime==1.23.2
-onnxruntime-gpu==1.23.2
 OpenCC==1.2.0
 orjson==3.11.4
 packaging==25.0
@@ -204,3 +203,4 @@ wrapt==2.0.1
 x-transformers==2.11.23
 xxhash==3.6.0
 yarl==1.22.0
+sherpa-onnx

@@ -25,6 +25,7 @@ import torchaudio
 import wget
 import yaml
 
+import asr_sherpaonnx
 import model_manager
 from f5_tts.model.utils import convert_char_to_pinyin
 
@@ -1445,8 +1446,17 @@ def load_ref_txt(ref_txt_path):
 def get_pinyin(*input_texts):
     return convert_char_to_pinyin([input_texts[0]])[0]
 
+css = """
+.small-audio {
+    min-height: 60px !important;
+}
 
-with gr.Blocks(title="TT-SVC_v3") as app:
+.small-audio audio {
+    height: 32px !important;
+}
+"""
+
+with gr.Blocks(title="TT-SVC_v3", css=css) as app:
     #     gr.Markdown(
     #         """
     # # 自定义 F5 TTS + SVC
@@ -1653,17 +1663,10 @@ with gr.Blocks(title="TT-SVC_v3") as app:
         stop_infer = True
 
 
-    model_manager = model_manager.WhisperModelManager()
-
-
-    def transcribe_audio(audio):
-        with model_manager.load_model() as model:
-            segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
-            result = ""
-            for segment in segments:
-                result += segment.text
-            return result
-
+    # model_manager = model_manager.WhisperModelManager()
+    #
+    # def transcribe_audio(audio):
+    #     return asr_sherpaonnx.transcribe(audio)
 
     def clear_audio():
         return def_txt
@@ -1732,14 +1735,23 @@ with gr.Blocks(title="TT-SVC_v3") as app:
 
             # 创建一个动态布局，最多 20 个输入框
             for i in range(1):  # 每行最多 5 个，4 行总共 20 个
-                with gr.Row() as row:
+                with gr.Row(equal_height=True) as row:
                     for j in range(max_per_row):
                         index = i * max_per_row + j
                         if index == 0:
                             textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=True)
-                            with gr.Column():
-                                pinyin_textbox = gr.Textbox(label="拼音")
+                            with gr.Column(scale=1):
+                                pinyin_textbox = gr.Textbox(label="拼音", lines=3)
                                 pinyin_button = gr.Button("查看拼音")
+                            audio_output = gr.Audio(
+                                label="合成音频",
+                                interactive=True,
+                                show_download_button=True,
+                                autoplay=True,
+                                waveform_options={"sample_rate": 48000},
+                                min_width=200
+                            )
+                            download_output = gr.File(label="下载文件", file_count="multiple")
                         else:
                             textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
                         textboxes.append(textbox)
@@ -1748,7 +1760,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
             num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
 
             with gr.Row():
-                clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2)
+                clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2, visible=False)
                 generate_btn = gr.Button("合成", variant="primary")
                 download_all = gr.Button("下载音频", variant="primary")
                 stop_btn = gr.Button("Stop", variant="primary")
@@ -1767,7 +1779,7 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                     cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
 
                 basic_ref_audio_user.upload(
-                    fn=transcribe_audio,
+                    fn=asr_sherpaonnx.transcribe,
                     inputs=basic_ref_audio_user,
                     outputs=basic_ref_text_input
                 )
@@ -1893,12 +1905,6 @@ with gr.Blocks(title="TT-SVC_v3") as app:
                 number_exclamation.change(None, number_exclamation, None,
                                           js="(v)=>{ setStorage('exclamation_pause',v) }")
                 number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
-
-            audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True,
-                                    autoplay=True, waveform_options={
-                    "sample_rate": 48000
-                })
-            download_output = gr.File(label="下载文件", file_count="multiple")
 
             language.change(
                 language_change,

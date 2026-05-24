@@ -10,21 +10,15 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import onnxruntime
 import requests
-import torch
 from opencc import OpenCC
 from pypinyin import Style, pinyin
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
-from ..zh_normalization.char_convert import tranditional_to_simplified
 from .dataset import get_char_phoneme_labels, get_phoneme_labels, prepare_onnx_input
 from .utils import load_config
+from ..zh_normalization.char_convert import tranditional_to_simplified
 
 onnxruntime.set_default_logger_severity(3)
-try:
-    onnxruntime.preload_dlls()
-except:
-    pass
-    # traceback.print_exc()
 warnings.filterwarnings("ignore")
 
 model_version = "1.1"
@@ -93,19 +87,26 @@ class G2PWOnnxConverter:
         sess_options = onnxruntime.SessionOptions()
         sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
         sess_options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
-        sess_options.intra_op_num_threads = 2 if torch.cuda.is_available() else 0
-        if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
-            self.session_g2pW = onnxruntime.InferenceSession(
-                os.path.join(uncompress_path, "g2pW.onnx"),
-                sess_options=sess_options,
-                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-            )
-        else:
-            self.session_g2pW = onnxruntime.InferenceSession(
-                os.path.join(uncompress_path, "g2pW.onnx"),
-                sess_options=sess_options,
-                providers=["CPUExecutionProvider"],
-            )
+        # sess_options.intra_op_num_threads = 2 if torch.cuda.is_available() else 0
+        # if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
+        #     self.session_g2pW = onnxruntime.InferenceSession(
+        #         os.path.join(uncompress_path, "g2pW.onnx"),
+        #         sess_options=sess_options,
+        #         providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        #     )
+        # else:
+        #     self.session_g2pW = onnxruntime.InferenceSession(
+        #         os.path.join(uncompress_path, "g2pW.onnx"),
+        #         sess_options=sess_options,
+        #         providers=["CPUExecutionProvider"],
+        #     )
+        sess_options.intra_op_num_threads = 0
+
+        self.session_g2pW = onnxruntime.InferenceSession(
+            os.path.join(uncompress_path, "g2pW.onnx"),
+            sess_options=sess_options,
+            providers=["CPUExecutionProvider"],
+        )
         self.config = load_config(config_path=os.path.join(uncompress_path, "config.py"), use_default=True)
 
         self.model_source = model_source if model_source else self.config.model_source
