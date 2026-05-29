@@ -111,7 +111,6 @@ def convert_char_to_pinyin_sovits_f5(text_list, polyphone=True, f5_vocab=None):
 
         ptr = 0
         for word, pos in seg_cut:
-            print("word:", word+":"+pos)
             word_len = len(word)
             current_pinyins = raw_pinyins[ptr: ptr + word_len]
             ptr += word_len

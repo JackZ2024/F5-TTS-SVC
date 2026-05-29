@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 # Above allows ruff to ignore E402: module level import not at top of file
 
+import collections
 import csv
 import os
 import pathlib
@@ -26,7 +27,6 @@ import wget
 import yaml
 
 import asr_sherpaonnx
-import model_manager
 from f5_tts.model.utils import convert_char_to_pinyin
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/sovits_svc")
@@ -65,7 +65,90 @@ rvc_config = Config()
 rvc_vc = VC(rvc_config)
 
 cur_rvc_model_path = ""
-custom_ema_model, pre_custom_path = None, ""
+
+
+class _ModelCache:
+    """
+    LRU GPU 模型缓存。最多将 gpu_slots 个模型同时保留在显存中。
+    超限时将空闲（不在推理中）的最旧模型卸载到 CPU RAM，
+    再次请求时优先从 CPU RAM 恢复（比磁盘加载快得多）。
+    _busy set 保证推理中的模型绝不会被驱逐。
+    """
+
+    def __init__(self, gpu_slots: int):
+        self.gpu_slots = gpu_slots
+        self._cond = threading.Condition()
+        self._gpu: dict = {}                        # path -> model (on GPU)
+        self._gpu_lru = collections.OrderedDict()  # LRU 顺序
+        self._cpu: dict = {}                        # path -> model (on CPU RAM)
+        self._busy: set = set()                     # 当前正在推理中的模型路径
+
+    def _log_status(self, event: str):
+        """打印操作事件、GPU/CPU 模型列表及剩余显存。"""
+        gpu_names = [os.path.basename(p) for p in self._gpu]
+        cpu_names = [os.path.basename(p) for p in self._cpu]
+        if torch.cuda.is_available():
+            free_bytes = torch.cuda.mem_get_info()[0]
+            vram_info = f"{free_bytes / 1024 ** 3:.1f} GB free"
+        else:
+            vram_info = "N/A (no CUDA)"
+        print(
+            f"[ModelCache] {event}\n"
+            f"  GPU({len(gpu_names)}/{self.gpu_slots}): {gpu_names}\n"
+            f"  CPU cache({len(cpu_names)}):  {cpu_names}\n"
+            f"  VRAM remaining: {vram_info}"
+        )
+
+    def acquire(self, ckpt_path: str, load_fn):
+        """
+        获取指定路径的模型（保证在 GPU 上），并标记为 busy。
+        推理结束后必须调用 release(ckpt_path)。
+        """
+        with self._cond:
+            # 已在 GPU，直接复用，更新 LRU
+            if ckpt_path in self._gpu:
+                self._busy.add(ckpt_path)
+                self._gpu_lru.move_to_end(ckpt_path)
+                return self._gpu[ckpt_path]
+
+            # GPU 槽位已满，驱逐最旧的空闲模型到 CPU
+            while len(self._gpu) >= self.gpu_slots:
+                evicted = next(
+                    (p for p in self._gpu_lru if p not in self._busy), None
+                )
+                if evicted is not None:
+                    mdl = self._gpu.pop(evicted)
+                    del self._gpu_lru[evicted]
+                    mdl.cpu()
+                    self._cpu[evicted] = mdl
+                    torch.cuda.empty_cache()
+                    self._log_status(f"GPU → CPU RAM: {os.path.basename(evicted)}")
+                    break
+                # 所有 GPU 模型都在推理中，等待某个完成
+                self._cond.wait()
+
+            # 从 CPU 缓存或磁盘加载
+            if ckpt_path in self._cpu:
+                mdl = self._cpu.pop(ckpt_path)
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                mdl.to(device)
+                self._log_status(f"CPU RAM → GPU: {os.path.basename(ckpt_path)}")
+            else:
+                mdl = load_fn()
+                if mdl is None:
+                    return None
+                self._log_status(f"磁盘 → GPU: {os.path.basename(ckpt_path)}")
+
+            self._gpu[ckpt_path] = mdl
+            self._gpu_lru[ckpt_path] = None
+            self._busy.add(ckpt_path)
+            return mdl
+
+    def release(self, ckpt_path: str):
+        """推理完成，从 busy 中移除，并通知等待中的驱逐请求。"""
+        with self._cond:
+            self._busy.discard(ckpt_path)
+            self._cond.notify_all()
 
 # load models
 
@@ -144,12 +227,11 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, text_mask_padding=False,
                              conv_layers=4, pe_attn_head=1)
 
-    global pre_custom_path, custom_ema_model
-    if pre_custom_path != ckpt_path or custom_ema_model is None:
-        custom_ema_model = load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
-        pre_custom_path = ckpt_path
+    def _load_fn():
+        return load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
 
-    return custom_ema_model
+    model = _model_cache.acquire(ckpt_path, _load_fn)
+    return model, ckpt_path
 
 
 def load_F5_models_from_csv():
@@ -564,6 +646,23 @@ rvc_models_dict = load_rvc_models_list()
 refs_dict, speaker_dict = load_refs_list()
 launch_in_service = False
 stop_infer = False
+
+# 推理并发数：从命令行 --concurrency 读取，默认为 1
+# 注：必须在 UI 构建前解析，所以用 sys.argv 直接预读而不用 click
+def _pre_parse_concurrency() -> int:
+    for i, arg in enumerate(sys.argv):
+        if arg in ("--concurrency", "-C") and i + 1 < len(sys.argv):
+            try:
+                return max(1, int(sys.argv[i + 1]))
+            except ValueError:
+                pass
+    return 1
+
+infer_concurrency_limit = _pre_parse_concurrency()
+print(f"[并发控制] 推理最大并发数: {infer_concurrency_limit}")
+
+# GPU 模型缓存：最多同时驻留 infer_concurrency_limit 个模型
+_model_cache = _ModelCache(infer_concurrency_limit)
 
 
 def get_sovits_model(svc_model, lang_alone, password, show_info=gr.Info):
@@ -1193,10 +1292,11 @@ def infer(
         lang_alone = language[:index]
 
     show_info("加载模型……")
-    ema_model = load_custom(model_name, language, password)
-    if ema_model is None:
+    _load_result = load_custom(model_name, language, password)
+    if _load_result is None or _load_result[0] is None:
         gr.Warning("模型加载失败")
         return gr.update(), [], used_seed
+    ema_model, _infer_ckpt_path = _load_result
 
     # 检查用户设置的输入框数量是否正常
     try:
@@ -1251,24 +1351,9 @@ def infer(
         gen_audio_path = "./gen_audio"
         if not os.path.exists(gen_audio_path):
             os.mkdir(gen_audio_path)
-        else:
-            # 把里面的东西删除
-            for file in os.listdir(gen_audio_path):
-                try:
-                    os.remove(gen_audio_path + "/" + file)
-                except:
-                    pass
         last_audio_path = "./last_audio"
         if not os.path.exists(last_audio_path):
             os.mkdir(last_audio_path)
-        else:
-            # 把里面的东西删除
-            for file in os.listdir(last_audio_path):
-                try:
-                    if file.endswith(".wav"):
-                        os.remove(last_audio_path + "/" + file)
-                except:
-                    pass
         tmp_audio_path = "./tmp"
         if not os.path.exists(tmp_audio_path):
             os.mkdir(tmp_audio_path)
@@ -1292,7 +1377,6 @@ def infer(
     # 开始生成
     generated_waves = []
     svc_waves = []
-    spectrograms = []
     progress = gr.Progress()
     start_pos = 0
     cur_box_index = 1
@@ -1304,27 +1388,32 @@ def infer(
             gr.Warning("停止生成")
             return gr.update(), [], used_seed
 
-        final_wave, final_sample_rate, combined_spectrogram = infer_process(
-            ref_audio,
-            ref_text.lower(),
-            gen_text.lower(),
-            ema_model,
-            vocoder,
-            cross_fade_duration=cross_fade_duration,
-            nfe_step=nfe_step,
-            speed=speed,
-            show_info=show_info,
-            no_ref_audio=no_ref_audio,
-            cfg_strength=cfg_strength
-            # progress=gr.Progress(),
-            # lang=lang,
-        )
+        with torch.no_grad():
+            final_wave, final_sample_rate, _ = infer_process(
+                ref_audio,
+                ref_text.lower(),
+                gen_text.lower(),
+                ema_model,
+                vocoder,
+                cross_fade_duration=cross_fade_duration,
+                nfe_step=nfe_step,
+                speed=speed,
+                show_info=show_info,
+                no_ref_audio=no_ref_audio,
+                cfg_strength=cfg_strength
+                # progress=gr.Progress(),
+                # lang=lang,
+            )
         # 直接输入48000的，方便后期剪辑
+        if isinstance(final_wave, torch.Tensor):
+            final_wave = final_wave.cpu().numpy()
         final_wave = librosa.resample(final_wave, orig_sr=final_sample_rate, target_sr=48000)
         final_sample_rate = 48000
 
         generated_waves.append(final_wave)
-        spectrograms.append(combined_spectrogram)
+        # 每句推理后主动释放 CUDA 缓存碎片，防止显存 OOM
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # 把音频转换改为一句一转换，也就是每生成一句音频，就需要在本地保存一下，并进行转换
         audio_filepath = tmp_audio_path + f"/tmp_audio_{i + 1}.wav"
@@ -1415,7 +1504,10 @@ def infer(
     if volume != 1.0:
         final_waves = final_waves * volume
 
-    return (final_sample_rate, final_waves), output_audio_list, used_seed
+    try:
+        return (final_sample_rate, final_waves), output_audio_list, used_seed
+    finally:
+        _model_cache.release(_infer_ckpt_path)
 
 
 def create_textboxes(num):
@@ -1446,6 +1538,24 @@ def load_ref_txt(ref_txt_path):
 def get_pinyin(*input_texts):
     return convert_char_to_pinyin([input_texts[0]])[0]
 
+
+MAX_REF_AUDIO_DURATION = 15  # 参考音频最大时长（秒）
+
+
+def transcribe_with_duration_check(audio_path):
+    """转录前先检测音频时长，超过限制直接返回提示，避免长音频占用转录队列"""
+    if not audio_path or not os.path.exists(audio_path):
+        return ""
+    try:
+        info = sf.info(audio_path)
+        if info.duration > MAX_REF_AUDIO_DURATION:
+            gr.Warning(f"参考音频过长（{info.duration:.1f}s），请上传 {MAX_REF_AUDIO_DURATION}s 以内的音频")
+            return "你输入的音频过长"
+    except Exception as e:
+        print(f"读取音频时长失败: {e}")
+        return "读取音频时长失败"
+    return asr_sherpaonnx.transcribe(audio_path)
+
 css = """
 .small-audio {
     min-height: 60px !important;
@@ -1456,7 +1566,7 @@ css = """
 }
 """
 
-with gr.Blocks(title="TT-SVC_v3", css=css) as app:
+with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
     #     gr.Markdown(
     #         """
     # # 自定义 F5 TTS + SVC
@@ -1688,617 +1798,623 @@ with gr.Blocks(title="TT-SVC_v3", css=css) as app:
         speaker_model = None
         def_lang = ""
 
-    with gr.Tabs():
-        with gr.TabItem("TT"):
-            with gr.Row():
-                # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
-                language = gr.Dropdown(
-                    choices=list(F5_models_dict.keys()), value=def_lang, label="语言", allow_custom_value=True
-                )
-                custom_ckpt_path = gr.Dropdown(
-                    choices=model_names,
-                    value=def_model,
-                    allow_custom_value=True,
-                    label="模型",
-                    visible=True,
-                )
-                ref_audio = gr.Dropdown(
-                    choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=True
-                )
-
-            with gr.Row(visible=False):
-                num_input = gr.Textbox(label="请输入需要的输入框数量(1-20)", value="1", scale=1)
-                tone_shift_slider = gr.Slider(
-                    label="音调调整",
-                    minimum=-12,
-                    maximum=12,
-                    value=0,
-                    step=1,
-                    info="音调偏移",
-                    scale=2
-                )
-                rvc_index_rate_slider = gr.Slider(
-                    label="语搜索特征比率",
-                    minimum=0,
-                    maximum=1,
-                    value=0,
-                    step=0.01,
-                    info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
-                    interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
-                    scale=2
-                )
-
-            # 动态布局区域
-            rows = []
-            max_per_row = 5
-            textboxes = []
-
-            # 创建一个动态布局，最多 20 个输入框
-            for i in range(1):  # 每行最多 5 个，4 行总共 20 个
-                with gr.Row(equal_height=True) as row:
-                    for j in range(max_per_row):
-                        index = i * max_per_row + j
-                        if index == 0:
-                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=True)
-                            with gr.Column(scale=1):
-                                pinyin_textbox = gr.Textbox(label="拼音", lines=3)
-                                pinyin_button = gr.Button("查看拼音")
-                            audio_output = gr.Audio(
-                                label="合成音频",
-                                interactive=True,
-                                show_download_button=True,
-                                autoplay=True,
-                                waveform_options={"sample_rate": 48000},
-                                min_width=200
-                            )
-                            download_output = gr.File(label="下载文件", file_count="multiple")
-                        else:
-                            textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
-                        textboxes.append(textbox)
-                    rows.append(row)
-            pinyin_button.click(get_pinyin, inputs=textboxes, outputs=pinyin_textbox)
-            num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
-
-            with gr.Row():
-                clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2, visible=False)
-                generate_btn = gr.Button("合成", variant="primary")
-                download_all = gr.Button("下载音频", variant="primary")
-                stop_btn = gr.Button("Stop", variant="primary")
-
-            # with gr.Accordion("高级设置", open=False):
-            # gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
-            with gr.Row(equal_height=True):
-                basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
-                basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
-                with gr.Column():
-                    basic_ref_text_input = gr.Textbox(
-                        label="参考音频对应文本",
-                        lines=2,
-                        value=def_txt,
-                    )
-                    cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
-
-                basic_ref_audio_user.upload(
-                    fn=asr_sherpaonnx.transcribe,
-                    inputs=basic_ref_audio_user,
-                    outputs=basic_ref_text_input
-                )
-
-                basic_ref_audio_user.clear(
-                    fn=clear_audio,
-                    inputs=None,
-                    outputs=basic_ref_text_input
-                )
-            modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
-            with gr.Row(visible=False):
-                enable_svc = gr.Checkbox(
-                    label="启用音频转换",
-                    info="勾选此项，启动音频转换。",
-                    value=False,
-                )
-
-                svc_type = gr.Dropdown(
-                    choices=svc_type_list,
-                    value=def_svc_type,
-                    label="音频转换类型选择",
-                    visible=True,
-                )
-
-                svc_model = gr.Dropdown(
-                    choices=speaker_models,
-                    value=speaker_model,
-                    label="音频转换音色选择",
-                    visible=True,
-                )
-
-                password_input = gr.Textbox(
-                    label="解压密码:",
-                    type="password",
-                    lines=1,
-                    value="",
-                )
-            with gr.Row():
-                speed_slider = gr.Slider(
-                    label="语速设置",
-                    minimum=0.3,
-                    maximum=2.0,
-                    value=get_speed(def_model),
-                    step=0.1,
-                    info="调整音频语速",
-                )
-                volume_slider = gr.Slider(
-                    label="音量调节",
-                    minimum=0.1,
-                    maximum=5.0,
-                    value=1.0,
-                    step=0.1,
-                    info="调整音频音量",
-                )
-                randomize_seed = gr.Checkbox(
-                    label="随机种子",
-                    info="勾选此项，每次会自动生成随机值",
-                    value=True,
-                    scale=1,
-                )
-                seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
-                nfe_slider = gr.Slider(
-                    label="运算步数",
-                    minimum=4,
-                    maximum=64,
-                    value=32,
-                    step=2,
-                    info="选择16步速度加倍，质量略降",
-                )
-            cfg_slider = gr.Slider(
-                label="参考强度设置",
-                minimum=0.0,
-                maximum=10.0,
-                value=2.0,
-                step=0.1,
-                info="值越大越像参考，值越小随机性越大",
-                visible=False
-            )
-
-            cross_fade_duration_slider = gr.Slider(
-                label="Cross-Fade Duration (s)",
-                minimum=0.0,
-                maximum=1.0,
-                value=0.15,
-                step=0.01,
-                info="设置两个片段之前的静音时长",
-                visible=False
-            )
-            with gr.Row(visible=True):
-
-                remove_silence = gr.Checkbox(
-                    label="删除静音",
-                    info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
-                    value=True,
-                    visible=False
-                )
-                save_line_audio = gr.Checkbox(
-                    label="按行保存音频",
-                    info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
-                    value=False,
-                    visible=False
-                )
-                insert_punct_in_space = gr.Checkbox(
-                    label="插入标点",
-                    info="此功能针对泰语，在空格处插入逗号",
-                    value=False,
-                    visible=False
-                )
-            with gr.Row(visible=False):
-                cb_auto_pause = gr.Checkbox(
-                    label="标点自动间距",
-                    value=False
-                )
-                number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
-                number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
-                number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
-                number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
-                number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
-                cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
-                number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
-                number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
-                number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
-                number_exclamation.change(None, number_exclamation, None,
-                                          js="(v)=>{ setStorage('exclamation_pause',v) }")
-                number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
-
-            language.change(
-                language_change,
-                inputs=[language],
-                outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio, svc_type, svc_model, rvc_index_rate_slider],
-                show_progress="hidden",
-            )
-
-            custom_ckpt_path.change(model_change,
-                                    inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
-                                    outputs=[basic_ref_text_input, ref_audio, speed_slider])
-
-            ref_audio.change(
-                ref_audio_change,
-                inputs=[language, ref_audio, basic_ref_audio_user, basic_ref_text_input],
-                outputs=[basic_ref_audio_preset, basic_ref_text_input],
-                show_progress="hidden",
-            )
-            svc_type.change(
-                svc_type_change,
-                inputs=[language, svc_type],
-                outputs=[svc_model, rvc_index_rate_slider],
-                show_progress="hidden",
-            )
-
-
-            def basic_tts(
-                    ref_audio_preset,
-                    ref_audio_user,
-                    ref_text_input,
-                    language,
-                    model_name,
-                    password,
-                    remove_silence,
-                    randomize_seed,
-                    seed_input,
-                    save_line_audio,
-                    insert_punct_in_space,
-                    cross_fade_duration_slider,
-                    nfe_slider,
-                    speed_slider,
-                    volume_slider,
-                    enable_svc,
-                    svc_type,
-                    svc_model,
-                    tone_shift,
-                    rvc_index_rate,
-                    num_input,
-                    modify_words,
-                    auto_pause,
-                    num_comma,
-                    num_period,
-                    num_question,
-                    num_exclamation,
-                    num_semicolon,
-                    no_ref_audio,
-                    cfg_strength,
-                    *gen_texts_input,
-            ):
-                if randomize_seed:
-                    seed_input = np.random.randint(0, 2 ** 31 - 1)
-
-                if modify_words and len(modify_words) > 0:
-                    gen_texts_input_modify = []
-                    for text in gen_texts_input:
-                        for modify in modify_words.split("\n"):
-                            parts = modify.split("\t")
-                            if len(parts) != 2:
-                                continue
-                            else:
-                                text = text.replace(parts[0], parts[1])
-                                gen_texts_input_modify.append(text)
-                else:
-                    gen_texts_input_modify = gen_texts_input
-                if ref_audio_user:
-                    ref_audio_input = ref_audio_user
-                else:
-                    ref_audio_input = ref_audio_preset
-                audio_out, gen_audio_list, used_seed = infer(
-                    ref_audio_input,
-                    ref_text_input,
-                    num_input,
-                    gen_texts_input_modify,
-                    language,
-                    model_name,
-                    password,
-                    remove_silence,
-                    auto_pause,
-                    pause_rules={
-                        '，': float(num_comma),
-                        '。': float(num_period),
-                        '？': float(num_question),
-                        '！': float(num_exclamation),
-                        '；': float(num_semicolon)
-                    },
-                    seed=seed_input,
-                    cross_fade_duration=cross_fade_duration_slider,
-                    nfe_step=nfe_slider,
-                    speed=speed_slider,
-                    volume=volume_slider,
-                    save_line_audio=save_line_audio,
-                    insert_punct_in_space=insert_punct_in_space,
-                    enable_svc=enable_svc,
-                    svc_type=svc_type,
-                    svc_model=svc_model,
-                    tone_shift=tone_shift,
-                    rvc_index_rate=rvc_index_rate,
-                    no_ref_audio=no_ref_audio,
-                    cfg_strength=cfg_strength
-                )
-                return audio_out, gen_audio_list, used_seed
-
-
-            intputs = [basic_ref_audio_preset,
-                       basic_ref_audio_user,
-                       basic_ref_text_input,
-                       language,
-                       custom_ckpt_path,
-                       password_input,
-                       remove_silence,
-                       randomize_seed,
-                       seed_input,
-                       save_line_audio,
-                       insert_punct_in_space,
-                       cross_fade_duration_slider,
-                       nfe_slider,
-                       speed_slider,
-                       volume_slider,
-                       enable_svc,
-                       svc_type,
-                       svc_model,
-                       tone_shift_slider,
-                       rvc_index_rate_slider,
-                       num_input,
-                       modify_words_input,
-                       cb_auto_pause,
-                       number_comma,
-                       number_period,
-                       number_question,
-                       number_exclamation,
-                       number_semicolon,
-                       cb_no_ref,
-                       cfg_slider
-                       ] + textboxes
-
-            generate_btn.click(
-                basic_tts,
-                inputs=intputs,
-                outputs=[audio_output, download_output, seed_input],
-            )
-
-            clear_box_btn.click(
-                clear_txt_boxs,
-                outputs=textboxes,
-            )
-
-            stop_btn.click(
-                stop_infer_btn
-            )
-
-            download_all.click(None, [], [], js="""
-                () => {
-                    const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '下载文件').parentElement;
-                    const links = component.getElementsByTagName('a');
-                    for (let link of links) {
-                        if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
-                            link.href = link.href.replace("http:", "https:");
-                        }
-                        link.click();
-                    }
-                }
-            """)
-
-        with gr.TabItem("音色转换"):
-            def convert_language_change(lang):
-
-                lang_alone = lang
-                if "-" in lang_alone:
-                    index = lang.find("-")
-                    lang_alone = lang_alone[:index]
-
-                speaker_models = []
-                speaker_model = None
-                svc_type_list = []
-                def_svc_type = None
-
-                global applio_models_dict
-                global rvc_models_dict
-                global sovits_models_dict
-                if lang_alone in applio_models_dict:
-                    svc_type_list.append("Applio")
-                if lang_alone in sovits_models_dict:
-                    svc_type_list.append("Sovits")
-                if lang_alone in rvc_models_dict:
-                    svc_type_list.append("RVC")
-
-                # 优先看看该语种有没有RVC模型，如果有就优先用RVC
-                if "Applio" in svc_type_list:
-                    def_svc_type = "Applio"
-                elif "Sovits" in svc_type_list:
-                    def_svc_type = "Sovits"
-                elif "RVC" in svc_type_list:
-                    def_svc_type = "RVC"
-
-                if def_svc_type == "Applio":
-                    svc_models_list = applio_models_dict[lang_alone]
-                    for speaker in svc_models_list:
-                        speaker_models.append(speaker["model_name"])
-                elif def_svc_type == "Sovits":
-                    svc_models_list = sovits_models_dict[lang_alone]
-                    for speaker in svc_models_list:
-                        speaker_models.append(speaker["model_name"])
-                elif def_svc_type == "RVC":
-                    svc_models_list = rvc_models_dict[lang_alone]
-                    for speaker in svc_models_list:
-                        speaker_models.append(speaker["model_name"])
-
-                if len(speaker_models) > 0:
-                    speaker_model = speaker_models[0]
-
-                return gr.update(choices=svc_type_list, value=def_svc_type), \
-                    gr.update(choices=speaker_models, value=speaker_model), \
-                    gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
-
-
-            def convert_svc_type_change(lang, svc_type):
-
-                lang_alone = lang
-                if "-" in lang_alone:
-                    index = lang.find("-")
-                    lang_alone = lang_alone[:index]
-
-                speaker_models = []
-                speaker_model = None
-
-                global applio_models_dict
-                global rvc_models_dict
-                global sovits_models_dict
-                if svc_type == "Applio":
-                    svc_models_list = applio_models_dict[lang_alone]
-                    for speaker in svc_models_list:
-                        speaker_models.append(speaker["model_name"])
-                elif svc_type == "Sovits":
-                    svc_models_list = sovits_models_dict[lang_alone]
-                    for speaker in svc_models_list:
-                        speaker_models.append(speaker["model_name"])
-                elif svc_type == "RVC":
-                    svc_models_list = rvc_models_dict[lang_alone]
-                    for speaker in svc_models_list:
-                        speaker_models.append(speaker["model_name"])
-
-                if len(speaker_models) > 0:
-                    speaker_model = speaker_models[0]
-
-                return gr.update(choices=speaker_models, value=speaker_model), \
-                    gr.update(interactive=(svc_type == "Applio" or svc_type == "RVC"))
-
-
-            def scanning_segm_audios():
-                gen_audio_path = "./gen_audio"
-                audios = []
-                for file in os.listdir(gen_audio_path):
-                    audios.append(gen_audio_path + "/" + file)
-
-                return audios
-
-
-            with gr.Row():
-                convert_language = gr.Dropdown(
-                    choices=list(F5_models_dict.keys()), value=def_lang, label="语言", allow_custom_value=True
-                )
-
-                convert_svc_type = gr.Dropdown(
-                    choices=svc_type_list,
-                    value=def_svc_type,
-                    label="音频转换音色选择",
-                    visible=True,
-                )
-
-                convert_svc_model = gr.Dropdown(
-                    choices=speaker_models,
-                    value=speaker_model,
-                    label="音频转换音色选择",
-                    visible=True,
-                )
-
-                convert_password = gr.Textbox(
-                    label="解压密码:",
-                    type="password",
-                    lines=1,
-                    value="",
-                )
-
-            with gr.Row():
-                convert_tone_shift_slider = gr.Slider(
-                    label="音调调整",
-                    minimum=-12,
-                    maximum=12,
-                    value=0,
-                    step=1,
-                    info="音调偏移",
-                )
-                convert_index_rate_slider = gr.Slider(
-                    label="语搜索特征比率",
-                    minimum=0,
-                    maximum=1,
-                    value=0,
-                    step=0.01,
-                    info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
-                    interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
-                )
-                convert_volume_slider = gr.Slider(
-                    label="音量调节",
-                    minimum=0.0,
-                    maximum=2.0,
-                    value=1.0,
-                    step=0.1,
-                    info="调整音频音量",
-                )
-            with gr.Row():
-                input_convert_audios = gr.File(label="转换音频", file_count="multiple")
-                output_audios = gr.File(label="输出音频", file_count="multiple")
-
-            with gr.Row():
-                convert_btn = gr.Button("转换", variant="primary")
-                segm_audio_btn = gr.Button("填充分段音频", variant="primary")
-                download_outputs = gr.Button("下载所有输出音频", variant="primary")
-
-            convert_language.change(
-                convert_language_change,
-                inputs=[convert_language],
-                outputs=[convert_svc_type, convert_svc_model, convert_index_rate_slider],
-                show_progress="hidden",
-            )
-            convert_svc_type.change(
-                convert_svc_type_change,
-                inputs=[convert_language, convert_svc_type],
-                outputs=[convert_svc_model, convert_index_rate_slider],
-                show_progress="hidden",
-            )
-
-            convert_btn.click(
-                convert_audios,
-                inputs=[input_convert_audios, convert_language, convert_svc_type, convert_svc_model, \
-                        convert_tone_shift_slider, convert_index_rate_slider, convert_password, convert_volume_slider],
-                outputs=[output_audios],
-            )
-
-            segm_audio_btn.click(
-                scanning_segm_audios,
-                outputs=[input_convert_audios],
-            )
-
-            download_outputs.click(None, [], [], js="""
-                () => {
-                    const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '输出音频').parentElement;
-                    const links = component.getElementsByTagName('a');
-                    for (let link of links) {
-                        if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
-                            link.href = link.href.replace("http:", "https:");
-                        }
-                        link.click();
-                    }
-                }
-            """)
-
-        modify_words_input.change(None, modify_words_input, None, js="(v)=>{ setStorage('modifyWords', v) }")
-
-        js_get_local_storage = """
-                   						    function() {
-                   						      globalThis.setStorage = (key, value)=>{
-                   						        localStorage.setItem(key, JSON.stringify(value))
-                   						      }
-                   						       globalThis.getStorage = (key, value)=>{
-                   						        return JSON.parse(localStorage.getItem(key))
-                   						      }
-
-                   						       var modifyWords = getStorage('modifyWords')
-                   						       const auto_pause = getStorage('auto_pause')
-                   						       const comma_pause = getStorage('comma_pause') || '1.0'
-                   						       const period_pause = getStorage('period_pause') || '2.0'
-                   						       const question_pause = getStorage('question_pause') || '3.0'
-                   						       const exclamation_pause = getStorage('exclamation_pause') || '3.0'
-                   						       const semicolon_pause = getStorage('semicolon_pause') || '3.0'
-                   						       return [modifyWords, auto_pause, comma_pause, period_pause, question_pause, exclamation_pause, semicolon_pause];
-                   						      }
-                   						    """
-        app.load(
-            None,
-            inputs=None,
-            outputs=[modify_words_input, cb_auto_pause, number_comma, number_period, number_question,
-                     number_exclamation, number_semicolon],
-            js=js_get_local_storage,
+    # with gr.Tabs():
+    #     with gr.TabItem("TT"):
+    with gr.Row():
+        # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
+        language = gr.Dropdown(
+            choices=list(F5_models_dict.keys()), value=def_lang, label="语言", allow_custom_value=True
         )
+        custom_ckpt_path = gr.Dropdown(
+            choices=model_names,
+            value=def_model,
+            allow_custom_value=True,
+            label="模型",
+            visible=True,
+        )
+        ref_audio = gr.Dropdown(
+            choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=True
+        )
+
+    with gr.Row(visible=False):
+        num_input = gr.Textbox(label="请输入需要的输入框数量(1-20)", value="1", scale=1)
+        tone_shift_slider = gr.Slider(
+            label="音调调整",
+            minimum=-12,
+            maximum=12,
+            value=0,
+            step=1,
+            info="音调偏移",
+            scale=2
+        )
+        rvc_index_rate_slider = gr.Slider(
+            label="语搜索特征比率",
+            minimum=0,
+            maximum=1,
+            value=0,
+            step=0.01,
+            info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
+            interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
+            scale=2
+        )
+
+    # 动态布局区域
+    rows = []
+    max_per_row = 5
+    textboxes = []
+
+    # 创建一个动态布局，最多 20 个输入框
+    for i in range(1):  # 每行最多 5 个，4 行总共 20 个
+        with gr.Row(equal_height=True) as row:
+            for j in range(max_per_row):
+                index = i * max_per_row + j
+                if index == 0:
+                    textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=True)
+                    with gr.Column(scale=1):
+                        pinyin_textbox = gr.Textbox(label="拼音", lines=3)
+                        pinyin_button = gr.Button("查看拼音")
+                    audio_output = gr.Audio(
+                        label="合成音频",
+                        interactive=True,
+                        show_download_button=True,
+                        autoplay=True,
+                        sources=[],  # 不显示上传/录音入口，保留波形剪辑
+                        waveform_options={"sample_rate": 48000},
+                        min_width=200,
+                        scale=2,
+                    )
+                    download_output = gr.File(label="下载文件", file_count="multiple", visible=False)
+                else:
+                    textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
+                textboxes.append(textbox)
+            rows.append(row)
+    pinyin_button.click(get_pinyin, inputs=textboxes, outputs=pinyin_textbox)
+    num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
+
+    with gr.Row():
+        clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2, visible=False)
+        generate_btn = gr.Button("合成", variant="primary")
+        download_all = gr.Button("下载音频", variant="primary")
+        stop_btn = gr.Button("Stop", variant="primary")
+
+    # with gr.Accordion("高级设置", open=False):
+    # gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
+    with gr.Row(equal_height=True):
+        basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
+        basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
+        with gr.Column():
+            basic_ref_text_input = gr.Textbox(
+                label="参考音频对应文本",
+                lines=2,
+                value=def_txt,
+            )
+            cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
+
+        basic_ref_audio_user.upload(
+            fn=transcribe_with_duration_check,
+            inputs=basic_ref_audio_user,
+            outputs=basic_ref_text_input,
+            concurrency_id="cpu_asr",
+            concurrency_limit=8,  # CPU 转录，可并发，与 GPU 推理队列相互独立
+        )
+
+        basic_ref_audio_user.clear(
+            fn=clear_audio,
+            inputs=None,
+            outputs=basic_ref_text_input
+        )
+    modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
+    with gr.Row(visible=False):
+        enable_svc = gr.Checkbox(
+            label="启用音频转换",
+            info="勾选此项，启动音频转换。",
+            value=False,
+        )
+
+        svc_type = gr.Dropdown(
+            choices=svc_type_list,
+            value=def_svc_type,
+            label="音频转换类型选择",
+            visible=True,
+        )
+
+        svc_model = gr.Dropdown(
+            choices=speaker_models,
+            value=speaker_model,
+            label="音频转换音色选择",
+            visible=True,
+        )
+
+        password_input = gr.Textbox(
+            label="解压密码:",
+            type="password",
+            lines=1,
+            value="",
+        )
+    with gr.Row():
+        speed_slider = gr.Slider(
+            label="语速设置",
+            minimum=0.3,
+            maximum=2.0,
+            value=get_speed(def_model),
+            step=0.1,
+            info="调整音频语速",
+        )
+        volume_slider = gr.Slider(
+            label="音量调节",
+            minimum=0.1,
+            maximum=5.0,
+            value=1.0,
+            step=0.1,
+            info="调整音频音量",
+        )
+        randomize_seed = gr.Checkbox(
+            label="随机种子",
+            info="勾选此项，每次会自动生成随机值",
+            value=True,
+            scale=1,
+        )
+        seed_input = gr.Number(show_label=False, value=0, precision=0, scale=1)
+        nfe_slider = gr.Slider(
+            label="运算步数",
+            minimum=4,
+            maximum=64,
+            value=32,
+            step=2,
+            info="选择16步速度加倍，质量略降",
+        )
+    cfg_slider = gr.Slider(
+        label="参考强度设置",
+        minimum=0.0,
+        maximum=10.0,
+        value=2.0,
+        step=0.1,
+        info="值越大越像参考，值越小随机性越大",
+        visible=False
+    )
+
+    cross_fade_duration_slider = gr.Slider(
+        label="Cross-Fade Duration (s)",
+        minimum=0.0,
+        maximum=1.0,
+        value=0.15,
+        step=0.01,
+        info="设置两个片段之前的静音时长",
+        visible=False
+    )
+    with gr.Row(visible=True):
+
+        remove_silence = gr.Checkbox(
+            label="删除静音",
+            info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
+            value=True,
+            visible=False
+        )
+        save_line_audio = gr.Checkbox(
+            label="按行保存音频",
+            info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
+            value=False,
+            visible=False
+        )
+        insert_punct_in_space = gr.Checkbox(
+            label="插入标点",
+            info="此功能针对泰语，在空格处插入逗号",
+            value=False,
+            visible=False
+        )
+    with gr.Row(visible=False):
+        cb_auto_pause = gr.Checkbox(
+            label="标点自动间距",
+            value=False
+        )
+        number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
+        number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
+        number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
+        number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
+        number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
+        cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
+        number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
+        number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
+        number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
+        number_exclamation.change(None, number_exclamation, None,
+                                  js="(v)=>{ setStorage('exclamation_pause',v) }")
+        number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
+
+    language.change(
+        language_change,
+        inputs=[language],
+        outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio, svc_type, svc_model, rvc_index_rate_slider],
+        show_progress="hidden",
+    )
+
+    custom_ckpt_path.change(model_change,
+                            inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
+                            outputs=[basic_ref_text_input, ref_audio, speed_slider])
+
+    ref_audio.change(
+        ref_audio_change,
+        inputs=[language, ref_audio, basic_ref_audio_user, basic_ref_text_input],
+        outputs=[basic_ref_audio_preset, basic_ref_text_input],
+        show_progress="hidden",
+    )
+    svc_type.change(
+        svc_type_change,
+        inputs=[language, svc_type],
+        outputs=[svc_model, rvc_index_rate_slider],
+        show_progress="hidden",
+    )
+
+
+    def basic_tts(
+            ref_audio_preset,
+            ref_audio_user,
+            ref_text_input,
+            language,
+            model_name,
+            password,
+            remove_silence,
+            randomize_seed,
+            seed_input,
+            save_line_audio,
+            insert_punct_in_space,
+            cross_fade_duration_slider,
+            nfe_slider,
+            speed_slider,
+            volume_slider,
+            enable_svc,
+            svc_type,
+            svc_model,
+            tone_shift,
+            rvc_index_rate,
+            num_input,
+            modify_words,
+            auto_pause,
+            num_comma,
+            num_period,
+            num_question,
+            num_exclamation,
+            num_semicolon,
+            no_ref_audio,
+            cfg_strength,
+            *gen_texts_input,
+    ):
+        if randomize_seed:
+            seed_input = np.random.randint(0, 2 ** 31 - 1)
+
+        if modify_words and len(modify_words) > 0:
+            gen_texts_input_modify = []
+            for text in gen_texts_input:
+                for modify in modify_words.split("\n"):
+                    parts = modify.split("\t")
+                    if len(parts) != 2:
+                        continue
+                    else:
+                        text = text.replace(parts[0], parts[1])
+                        gen_texts_input_modify.append(text)
+        else:
+            gen_texts_input_modify = gen_texts_input
+        if ref_audio_user:
+            ref_audio_input = ref_audio_user
+        else:
+            ref_audio_input = ref_audio_preset
+        audio_out, gen_audio_list, used_seed = infer(
+            ref_audio_input,
+            ref_text_input,
+            num_input,
+            gen_texts_input_modify,
+            language,
+            model_name,
+            password,
+            remove_silence,
+            auto_pause,
+            pause_rules={
+                '，': float(num_comma),
+                '。': float(num_period),
+                '？': float(num_question),
+                '！': float(num_exclamation),
+                '；': float(num_semicolon)
+            },
+            seed=seed_input,
+            cross_fade_duration=cross_fade_duration_slider,
+            nfe_step=nfe_slider,
+            speed=speed_slider,
+            volume=volume_slider,
+            save_line_audio=save_line_audio,
+            insert_punct_in_space=insert_punct_in_space,
+            enable_svc=enable_svc,
+            svc_type=svc_type,
+            svc_model=svc_model,
+            tone_shift=tone_shift,
+            rvc_index_rate=rvc_index_rate,
+            no_ref_audio=no_ref_audio,
+            cfg_strength=cfg_strength
+        )
+        return audio_out, gen_audio_list, used_seed
+
+
+    intputs = [basic_ref_audio_preset,
+               basic_ref_audio_user,
+               basic_ref_text_input,
+               language,
+               custom_ckpt_path,
+               password_input,
+               remove_silence,
+               randomize_seed,
+               seed_input,
+               save_line_audio,
+               insert_punct_in_space,
+               cross_fade_duration_slider,
+               nfe_slider,
+               speed_slider,
+               volume_slider,
+               enable_svc,
+               svc_type,
+               svc_model,
+               tone_shift_slider,
+               rvc_index_rate_slider,
+               num_input,
+               modify_words_input,
+               cb_auto_pause,
+               number_comma,
+               number_period,
+               number_question,
+               number_exclamation,
+               number_semicolon,
+               cb_no_ref,
+               cfg_slider
+               ] + textboxes
+
+    generate_btn.click(
+        basic_tts,
+        inputs=intputs,
+        outputs=[audio_output, download_output, seed_input],
+        concurrency_id="gpu_infer",
+        concurrency_limit=infer_concurrency_limit,
+    )
+
+    clear_box_btn.click(
+        clear_txt_boxs,
+        outputs=textboxes,
+    )
+
+    stop_btn.click(
+        stop_infer_btn
+    )
+
+    download_all.click(None, [], [], js="""
+        () => {
+            const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '下载文件').parentElement;
+            const links = component.getElementsByTagName('a');
+            for (let link of links) {
+                if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
+                    link.href = link.href.replace("http:", "https:");
+                }
+                link.click();
+            }
+        }
+    """)
+
+        # with gr.TabItem("音色转换"):
+        #     def convert_language_change(lang):
+        #
+        #         lang_alone = lang
+        #         if "-" in lang_alone:
+        #             index = lang.find("-")
+        #             lang_alone = lang_alone[:index]
+        #
+        #         speaker_models = []
+        #         speaker_model = None
+        #         svc_type_list = []
+        #         def_svc_type = None
+        #
+        #         global applio_models_dict
+        #         global rvc_models_dict
+        #         global sovits_models_dict
+        #         if lang_alone in applio_models_dict:
+        #             svc_type_list.append("Applio")
+        #         if lang_alone in sovits_models_dict:
+        #             svc_type_list.append("Sovits")
+        #         if lang_alone in rvc_models_dict:
+        #             svc_type_list.append("RVC")
+        #
+        #         # 优先看看该语种有没有RVC模型，如果有就优先用RVC
+        #         if "Applio" in svc_type_list:
+        #             def_svc_type = "Applio"
+        #         elif "Sovits" in svc_type_list:
+        #             def_svc_type = "Sovits"
+        #         elif "RVC" in svc_type_list:
+        #             def_svc_type = "RVC"
+        #
+        #         if def_svc_type == "Applio":
+        #             svc_models_list = applio_models_dict[lang_alone]
+        #             for speaker in svc_models_list:
+        #                 speaker_models.append(speaker["model_name"])
+        #         elif def_svc_type == "Sovits":
+        #             svc_models_list = sovits_models_dict[lang_alone]
+        #             for speaker in svc_models_list:
+        #                 speaker_models.append(speaker["model_name"])
+        #         elif def_svc_type == "RVC":
+        #             svc_models_list = rvc_models_dict[lang_alone]
+        #             for speaker in svc_models_list:
+        #                 speaker_models.append(speaker["model_name"])
+        #
+        #         if len(speaker_models) > 0:
+        #             speaker_model = speaker_models[0]
+        #
+        #         return gr.update(choices=svc_type_list, value=def_svc_type), \
+        #             gr.update(choices=speaker_models, value=speaker_model), \
+        #             gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
+        #
+        #
+        #     def convert_svc_type_change(lang, svc_type):
+        #
+        #         lang_alone = lang
+        #         if "-" in lang_alone:
+        #             index = lang.find("-")
+        #             lang_alone = lang_alone[:index]
+        #
+        #         speaker_models = []
+        #         speaker_model = None
+        #
+        #         global applio_models_dict
+        #         global rvc_models_dict
+        #         global sovits_models_dict
+        #         if svc_type == "Applio":
+        #             svc_models_list = applio_models_dict[lang_alone]
+        #             for speaker in svc_models_list:
+        #                 speaker_models.append(speaker["model_name"])
+        #         elif svc_type == "Sovits":
+        #             svc_models_list = sovits_models_dict[lang_alone]
+        #             for speaker in svc_models_list:
+        #                 speaker_models.append(speaker["model_name"])
+        #         elif svc_type == "RVC":
+        #             svc_models_list = rvc_models_dict[lang_alone]
+        #             for speaker in svc_models_list:
+        #                 speaker_models.append(speaker["model_name"])
+        #
+        #         if len(speaker_models) > 0:
+        #             speaker_model = speaker_models[0]
+        #
+        #         return gr.update(choices=speaker_models, value=speaker_model), \
+        #             gr.update(interactive=(svc_type == "Applio" or svc_type == "RVC"))
+        #
+        #
+        #     def scanning_segm_audios():
+        #         gen_audio_path = "./gen_audio"
+        #         audios = []
+        #         for file in os.listdir(gen_audio_path):
+        #             audios.append(gen_audio_path + "/" + file)
+        #
+        #         return audios
+        #
+        #
+        #     with gr.Row():
+        #         convert_language = gr.Dropdown(
+        #             choices=list(F5_models_dict.keys()), value=def_lang, label="语言", allow_custom_value=True
+        #         )
+        #
+        #         convert_svc_type = gr.Dropdown(
+        #             choices=svc_type_list,
+        #             value=def_svc_type,
+        #             label="音频转换音色选择",
+        #             visible=True,
+        #         )
+        #
+        #         convert_svc_model = gr.Dropdown(
+        #             choices=speaker_models,
+        #             value=speaker_model,
+        #             label="音频转换音色选择",
+        #             visible=True,
+        #         )
+        #
+        #         convert_password = gr.Textbox(
+        #             label="解压密码:",
+        #             type="password",
+        #             lines=1,
+        #             value="",
+        #         )
+        #
+        #     with gr.Row():
+        #         convert_tone_shift_slider = gr.Slider(
+        #             label="音调调整",
+        #             minimum=-12,
+        #             maximum=12,
+        #             value=0,
+        #             step=1,
+        #             info="音调偏移",
+        #         )
+        #         convert_index_rate_slider = gr.Slider(
+        #             label="语搜索特征比率",
+        #             minimum=0,
+        #             maximum=1,
+        #             value=0,
+        #             step=0.01,
+        #             info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
+        #             interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"),
+        #         )
+        #         convert_volume_slider = gr.Slider(
+        #             label="音量调节",
+        #             minimum=0.0,
+        #             maximum=2.0,
+        #             value=1.0,
+        #             step=0.1,
+        #             info="调整音频音量",
+        #         )
+        #     with gr.Row():
+        #         input_convert_audios = gr.File(label="转换音频", file_count="multiple")
+        #         output_audios = gr.File(label="输出音频", file_count="multiple")
+        #
+        #     with gr.Row():
+        #         convert_btn = gr.Button("转换", variant="primary")
+        #         segm_audio_btn = gr.Button("填充分段音频", variant="primary")
+        #         download_outputs = gr.Button("下载所有输出音频", variant="primary")
+        #
+        #     convert_language.change(
+        #         convert_language_change,
+        #         inputs=[convert_language],
+        #         outputs=[convert_svc_type, convert_svc_model, convert_index_rate_slider],
+        #         show_progress="hidden",
+        #     )
+        #     convert_svc_type.change(
+        #         convert_svc_type_change,
+        #         inputs=[convert_language, convert_svc_type],
+        #         outputs=[convert_svc_model, convert_index_rate_slider],
+        #         show_progress="hidden",
+        #     )
+        #
+        #     convert_btn.click(
+        #         convert_audios,
+        #         inputs=[input_convert_audios, convert_language, convert_svc_type, convert_svc_model, \
+        #                 convert_tone_shift_slider, convert_index_rate_slider, convert_password, convert_volume_slider],
+        #         outputs=[output_audios],
+        #     )
+        #
+        #     segm_audio_btn.click(
+        #         scanning_segm_audios,
+        #         outputs=[input_convert_audios],
+        #     )
+        #
+        #     download_outputs.click(None, [], [], js="""
+        #         () => {
+        #             const component = Array.from(document.getElementsByTagName('label')).find(el => el.textContent.trim() === '输出音频').parentElement;
+        #             const links = component.getElementsByTagName('a');
+        #             for (let link of links) {
+        #                 if (link.href.startsWith("http:") && !link.href.includes("127.0.0.1")) {
+        #                     link.href = link.href.replace("http:", "https:");
+        #                 }
+        #                 link.click();
+        #             }
+        #         }
+        #     """)
+
+    modify_words_input.change(None, modify_words_input, None, js="(v)=>{ setStorage('modifyWords', v) }")
+
+    js_get_local_storage = """
+                                        function() {
+                                          globalThis.setStorage = (key, value)=>{
+                                            localStorage.setItem(key, JSON.stringify(value))
+                                          }
+                                           globalThis.getStorage = (key, value)=>{
+                                            return JSON.parse(localStorage.getItem(key))
+                                          }
+
+                                           var modifyWords = getStorage('modifyWords')
+                                           const auto_pause = getStorage('auto_pause')
+                                           const comma_pause = getStorage('comma_pause') || '1.0'
+                                           const period_pause = getStorage('period_pause') || '2.0'
+                                           const question_pause = getStorage('question_pause') || '3.0'
+                                           const exclamation_pause = getStorage('exclamation_pause') || '3.0'
+                                           const semicolon_pause = getStorage('semicolon_pause') || '3.0'
+                                           return [modifyWords, auto_pause, comma_pause, period_pause, question_pause, exclamation_pause, semicolon_pause];
+                                          }
+                                        """
+    app.load(
+        None,
+        inputs=None,
+        outputs=[modify_words_input, cb_auto_pause, number_comma, number_period, number_question,
+                 number_exclamation, number_semicolon],
+        js=js_get_local_storage,
+    )
 
 
 @click.command()
@@ -2333,7 +2449,14 @@ with gr.Blocks(title="TT-SVC_v3", css=css) as app:
     default=False,
     help="Launch in service",
 )
-def main(port, host, share, api, root_path, inbrowser, inservice):
+@click.option(
+    "--concurrency",
+    "-C",
+    default=1,
+    type=int,
+    help="Max concurrent GPU inferences (default: 1). Set to VRAM_GB // 4 as a guideline, e.g. 2 for 8 GB.",
+)
+def main(port, host, share, api, root_path, inbrowser, inservice, concurrency):
     global app
     global launch_in_service
     launch_in_service = inservice
