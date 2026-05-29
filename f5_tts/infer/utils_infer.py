@@ -1,6 +1,7 @@
 # A unified script for inference process
 # Make adjustments inside functions, and consider both gradio and cli scripts if need to change func output format
 import os
+import string
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
@@ -374,6 +375,8 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=print):
         if ref_text.endswith("."):
             ref_text += " "
         else:
+            punc = string.punctuation + "！？。，；“”‘’"
+            ref_text = ref_text.rstrip(punc)
             ref_text += ". "
 
     print("\nref_text  ", ref_text)
