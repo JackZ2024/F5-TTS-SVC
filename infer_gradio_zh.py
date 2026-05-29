@@ -1863,7 +1863,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
                         min_width=200,
                         scale=2,
                     )
-                    download_output = gr.File(label="下载文件", file_count="multiple", visible=False)
+                    download_output = gr.File(label="下载文件", file_count="multiple")
                 else:
                     textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
                 textboxes.append(textbox)
@@ -1875,7 +1875,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2, visible=False)
         generate_btn = gr.Button("合成", variant="primary")
         download_all = gr.Button("下载音频", variant="primary")
-        stop_btn = gr.Button("Stop", variant="primary")
+        stop_btn = gr.Button("Stop", variant="primary", visible=False)
 
     # with gr.Accordion("高级设置", open=False):
     # gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
