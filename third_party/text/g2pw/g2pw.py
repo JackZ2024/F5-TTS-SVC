@@ -1,5 +1,6 @@
 # This code is modified from https://github.com/mozillazg/pypinyin-g2pW
 
+import ast
 import pickle
 import os
 from importlib.resources import files
@@ -15,6 +16,7 @@ from .onnx_api import G2PWOnnxConverter
 current_file_path = os.path.dirname(__file__)
 PP_DICT_PATH = os.path.join(current_file_path, "polyphonic.rep")
 PP_FIX_DICT_PATH = os.path.join(current_file_path, "polyphonic-fix.rep")
+jieba_fast_added_words = set()
 
 
 class G2PWPinyin(Pinyin):
@@ -110,30 +112,38 @@ def _remove_dup_and_empty(lst_list):
     return new_lst_list
 
 
-def get_dict():
-    polyphonic_dict = read_dict()
+def resolve_pinyin_dict_path(pinyin_dict_path=None):
+    if pinyin_dict_path and os.path.exists(pinyin_dict_path):
+        return os.path.abspath(pinyin_dict_path)
+
+    default_path = str(files("f5_tts").joinpath("dicts/pypinyin.txt"))
+    return os.path.abspath(default_path) if os.path.exists(default_path) else None
+
+
+def get_dict(pinyin_dict_path=None):
+    polyphonic_dict = read_dict(pinyin_dict_path)
 
     return polyphonic_dict
 
 
-def read_dict():
+def read_dict(pinyin_dict_path=None):
     polyphonic_dict = {}
     with open(PP_DICT_PATH, encoding="utf-8") as f:
         line = f.readline()
         while line:
             key, value_str = line.split(":")
-            value = eval(value_str.strip())
+            value = ast.literal_eval(value_str.strip())
             polyphonic_dict[key.strip()] = value
             line = f.readline()
     with open(PP_FIX_DICT_PATH, encoding="utf-8") as f:
         line = f.readline()
         while line:
             key, value_str = line.split(":")
-            value = eval(value_str.strip())
+            value = ast.literal_eval(value_str.strip())
             polyphonic_dict[key.strip()] = value
             line = f.readline()
-    pypinyin_dict_file = str(files("f5_tts").joinpath(f"dicts/pypinyin.txt"))
-    if os.path.exists(pypinyin_dict_file):
+    pypinyin_dict_file = resolve_pinyin_dict_path(pinyin_dict_path)
+    if pypinyin_dict_file and os.path.exists(pypinyin_dict_file):
         for line in open(pypinyin_dict_file, "r", encoding="utf-8").read().split("\n"):
             if "#" in line:
                 continue
@@ -141,15 +151,42 @@ def read_dict():
             if len(parts) == 2:
                 polyphonic_dict[parts[0].strip()] = [to_tone3(item) for item in parts[1].strip().split(" ")]
     for word in polyphonic_dict:
-        jieba_fast.add_word(word)
+        if word not in jieba_fast_added_words:
+            jieba_fast.add_word(word)
+            jieba_fast_added_words.add(word)
     return polyphonic_dict
 
 
-def correct_pronunciation(word, word_pinyins):
-    new_pinyins = pp_dict.get(word, "")
+_pp_dict_cache = {}
+
+
+def get_pp_dict(pinyin_dict_path=None):
+    cache_key = resolve_pinyin_dict_path(pinyin_dict_path)
+    if cache_key not in _pp_dict_cache:
+        _pp_dict_cache[cache_key] = get_dict(cache_key)
+    return _pp_dict_cache[cache_key]
+
+
+def preload_pp_dicts():
+    dicts_dir = str(files("f5_tts").joinpath("dicts"))
+    if not os.path.isdir(dicts_dir):
+        return 0
+
+    count = 0
+    for file_name in os.listdir(dicts_dir):
+        file_path = os.path.join(dicts_dir, file_name)
+        if os.path.isfile(file_path):
+            get_pp_dict(file_path)
+            count += 1
+    return count
+
+
+def correct_pronunciation(word, word_pinyins, pinyin_dict_path=None):
+    current_pp_dict = get_pp_dict(pinyin_dict_path)
+    new_pinyins = current_pp_dict.get(word, "")
     if new_pinyins == "":
         for idx, w in enumerate(word):
-            w_pinyin = pp_dict.get(w, "")
+            w_pinyin = current_pp_dict.get(w, "")
             if w_pinyin != "":
                 word_pinyins[idx] = w_pinyin[0]
         return word_pinyins
@@ -157,4 +194,4 @@ def correct_pronunciation(word, word_pinyins):
         return new_pinyins
 
 
-pp_dict = get_dict()
+pp_dict = get_pp_dict()

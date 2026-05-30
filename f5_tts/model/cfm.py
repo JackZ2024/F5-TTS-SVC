@@ -91,6 +91,7 @@ class CFM(nn.Module):
         cfg_strength=1.0,
         sway_sampling_coef=None,
         seed: int | None = None,
+        rng: torch.Generator | None = None,
         max_duration=4096,
         vocoder: Callable[[float["b d n"]], float["b nw"]] | None = None,  # noqa: F722
         use_epss=True,
@@ -157,6 +158,7 @@ class CFM(nn.Module):
             mask = None
 
         # neural ode
+        transformer_cache = {} if self.transformer.__class__.__name__ == "DiT" else None
 
         def fn(t, x):
             # at each step, conditioning is fixed
@@ -173,6 +175,7 @@ class CFM(nn.Module):
                     drop_audio_cond=False,
                     drop_text=False,
                     cache=True,
+                    **({"cache_context": transformer_cache} if transformer_cache is not None else {}),
                 )
                 return pred
 
@@ -185,6 +188,7 @@ class CFM(nn.Module):
                 mask=mask,
                 cfg_infer=True,
                 cache=True,
+                **({"cache_context": transformer_cache} if transformer_cache is not None else {}),
             )
             pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
             return pred + (pred - null_pred) * cfg_strength
@@ -192,11 +196,12 @@ class CFM(nn.Module):
         # noise input
         # to make sure batch inference result is same with different batch size, and for sure single inference
         # still some difference maybe due to convolutional layers
+        if rng is None and exists(seed):
+            rng = torch.Generator(device=self.device)
+            rng.manual_seed(seed)
         y0 = []
         for dur in duration:
-            if exists(seed):
-                torch.manual_seed(seed)
-            y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype))
+            y0.append(torch.randn(dur, self.num_channels, device=self.device, dtype=step_cond.dtype, generator=rng))
         y0 = pad_sequence(y0, padding_value=0, batch_first=True)
 
         t_start = 0

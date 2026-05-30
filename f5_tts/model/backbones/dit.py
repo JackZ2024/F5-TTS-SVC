@@ -239,18 +239,33 @@ class DiT(nn.Module):
         drop_audio_cond: bool = False,
         drop_text: bool = False,
         cache: bool = True,
+        cache_context: dict | None = None,
         audio_mask: bool["b n"] | None = None,  # noqa: F722
     ):
         seq_len = x.shape[1]
         if cache:
             if drop_text:
-                if self.text_uncond is None:
-                    self.text_uncond = self.text_embed(text, seq_len, drop_text=True, audio_mask=audio_mask)
-                text_embed = self.text_uncond
+                if cache_context is not None:
+                    if "text_uncond" not in cache_context:
+                        cache_context["text_uncond"] = self.text_embed(
+                            text, seq_len, drop_text=True, audio_mask=audio_mask
+                        )
+                    text_embed = cache_context["text_uncond"]
+                else:
+                    if self.text_uncond is None:
+                        self.text_uncond = self.text_embed(text, seq_len, drop_text=True, audio_mask=audio_mask)
+                    text_embed = self.text_uncond
             else:
-                if self.text_cond is None:
-                    self.text_cond = self.text_embed(text, seq_len, drop_text=False, audio_mask=audio_mask)
-                text_embed = self.text_cond
+                if cache_context is not None:
+                    if "text_cond" not in cache_context:
+                        cache_context["text_cond"] = self.text_embed(
+                            text, seq_len, drop_text=False, audio_mask=audio_mask
+                        )
+                    text_embed = cache_context["text_cond"]
+                else:
+                    if self.text_cond is None:
+                        self.text_cond = self.text_embed(text, seq_len, drop_text=False, audio_mask=audio_mask)
+                    text_embed = self.text_cond
         else:
             text_embed = self.text_embed(text, seq_len, drop_text=drop_text, audio_mask=audio_mask)
 
@@ -272,6 +287,7 @@ class DiT(nn.Module):
         drop_text: bool = False,  # cfg for text
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
+        cache_context: dict | None = None,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         if time.ndim == 0:
@@ -281,17 +297,38 @@ class DiT(nn.Module):
         t = self.time_embed(time)
         if cfg_infer:  # pack cond & uncond forward: b n d -> 2b n d
             x_cond = self.get_input_embed(
-                x, cond, text, drop_audio_cond=False, drop_text=False, cache=cache, audio_mask=mask
+                x,
+                cond,
+                text,
+                drop_audio_cond=False,
+                drop_text=False,
+                cache=cache,
+                cache_context=cache_context,
+                audio_mask=mask,
             )
             x_uncond = self.get_input_embed(
-                x, cond, text, drop_audio_cond=True, drop_text=True, cache=cache, audio_mask=mask
+                x,
+                cond,
+                text,
+                drop_audio_cond=True,
+                drop_text=True,
+                cache=cache,
+                cache_context=cache_context,
+                audio_mask=mask,
             )
             x = torch.cat((x_cond, x_uncond), dim=0)
             t = torch.cat((t, t), dim=0)
             mask = torch.cat((mask, mask), dim=0) if mask is not None else None
         else:
             x = self.get_input_embed(
-                x, cond, text, drop_audio_cond=drop_audio_cond, drop_text=drop_text, cache=cache, audio_mask=mask
+                x,
+                cond,
+                text,
+                drop_audio_cond=drop_audio_cond,
+                drop_text=drop_text,
+                cache=cache,
+                cache_context=cache_context,
+                audio_mask=mask,
             )
 
         rope = self.rotary_embed.forward_from_seq_len(seq_len)

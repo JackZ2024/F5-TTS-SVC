@@ -6,13 +6,16 @@ import re
 from collections import defaultdict
 from importlib.resources import files
 
-import jieba
 import torch
-from pypinyin import lazy_pinyin, Style, load_phrases_dict
-from pypinyin.constants import PHRASES_DICT
+from pypinyin import lazy_pinyin, Style
 from torch.nn.utils.rnn import pad_sequence
 
 from third_party.text.gptsovits_text_front import convert_char_to_pinyin_sovits_f5
+
+try:
+    import jieba_fast as jieba
+except ImportError:
+    import jieba
 
 
 # seed everything
@@ -181,7 +184,88 @@ def is_chinese(c):
     return "\u3100" <= c <= "\u9fff"
 
 
-dict_loaded = False
+pypinyin_dict_cache = {}
+jieba_added_words = set()
+
+
+def resolve_pinyin_dict_path(dict_name=None):
+    if not dict_name:
+        return None
+
+    dict_path = os.fspath(dict_name)
+    if os.path.isabs(dict_path):
+        return dict_path if os.path.exists(dict_path) else None
+
+    dicts_dir = str(files("f5_tts").joinpath("dicts"))
+    candidates = [os.path.join(dicts_dir, dict_path)]
+    if not os.path.splitext(dict_path)[1]:
+        candidates.append(os.path.join(dicts_dir, f"{dict_path}.txt"))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
+
+
+def normalize_pinyin_config(pinyin_config=None):
+    if isinstance(pinyin_config, dict):
+        use_g2pw = pinyin_config.get("use_g2pw", True)
+        if isinstance(use_g2pw, str):
+            use_g2pw = use_g2pw.strip().lower() in {"1", "true", "yes", "on"}
+        return {
+            "use_g2pw": bool(use_g2pw),
+            "dict_name": pinyin_config.get("dict_name") or None,
+        }
+
+    return {
+        "use_g2pw": True,
+        "dict_name": pinyin_config or None,
+    }
+
+
+def get_local_pypinyin_dict(dict_name=None):
+    pypinyin_dict_file = resolve_pinyin_dict_path(dict_name)
+    if not pypinyin_dict_file or not os.path.exists(pypinyin_dict_file):
+        return {}
+
+    pypinyin_dict_key = os.path.abspath(pypinyin_dict_file)
+    if pypinyin_dict_key not in pypinyin_dict_cache:
+        print(f"加载pypinyin词典{pypinyin_dict_file}")
+        loaded_phrases = load_pypinyin_dict_file(pypinyin_dict_file)
+        pypinyin_dict_cache[pypinyin_dict_key] = loaded_phrases
+        for word in loaded_phrases:
+            if word not in jieba_added_words:
+                jieba.add_word(word)
+                jieba_added_words.add(word)
+
+    return pypinyin_dict_cache[pypinyin_dict_key]
+
+
+def preload_pypinyin_dicts():
+    dicts_dir = str(files("f5_tts").joinpath("dicts"))
+    if not os.path.isdir(dicts_dir):
+        return 0
+
+    count = 0
+    for file_name in os.listdir(dicts_dir):
+        file_path = os.path.join(dicts_dir, file_name)
+        if os.path.isfile(file_path):
+            get_local_pypinyin_dict(file_path)
+            count += 1
+    return count
+
+
+def get_phrase_pinyins(local_pinyin_dict, phrase):
+    phrase_pinyins = local_pinyin_dict.get(phrase)
+    if not phrase_pinyins or len(phrase_pinyins) != len(phrase):
+        return None
+
+    result = []
+    for item in phrase_pinyins:
+        if not item:
+            return None
+        result.append(item[0])
+    return result
 
 
 # 中文混合输入转拼音，汉字可以混入拼音
@@ -190,19 +274,7 @@ def convert_char_to_pinyin_big_dict(text_list, pinyin_dict_path=None, polyphone=
         jieba.default_logger.setLevel(50)  # CRITICAL
         jieba.initialize()
 
-    global dict_loaded
-    if not dict_loaded:
-        dict_loaded = True
-
-        if pinyin_dict_path and os.path.exists(pinyin_dict_path):  # 推理的时候放在权重文件夹指定
-            pypinyin_dict_file = pinyin_dict_path
-        else:  # 微调的时候放在固定dicts文件夹
-            pypinyin_dict_file = str(files("f5_tts").joinpath(f"dicts/pypinyin.txt"))
-        if os.path.exists(pypinyin_dict_file):
-            print(f"加载pypinyin词典{pypinyin_dict_file}")
-            load_phrases_dict(load_pypinyin_dict_file(pypinyin_dict_file))
-            for word in PHRASES_DICT:
-                jieba.add_word(word)
+    local_pinyin_dict = get_local_pypinyin_dict(pinyin_dict_path)
 
     final_text_list = []
     custom_trans = str.maketrans(
@@ -228,7 +300,9 @@ def convert_char_to_pinyin_big_dict(text_list, pinyin_dict_path=None, polyphone=
                     char_list.append(" ")
                 char_list.extend(seg)
             elif polyphone and seg_byte_len == 3 * len(seg):  # if pure east asian characters
-                seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
+                seg_ = get_phrase_pinyins(local_pinyin_dict, seg)
+                if seg_ is None:
+                    seg_ = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
                 for i, c in enumerate(seg):
                     if is_chinese(c):
                         char_list.append(" ")
@@ -239,7 +313,10 @@ def convert_char_to_pinyin_big_dict(text_list, pinyin_dict_path=None, polyphone=
                         char_list.extend(c)
                     elif is_chinese(c):
                         char_list.append(" ")
-                        char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
+                        c_pinyin = get_phrase_pinyins(local_pinyin_dict, c)
+                        if c_pinyin is None:
+                            c_pinyin = lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True)
+                        char_list.extend(c_pinyin)
                     else:
                         char_list.append(c)
         return char_list
@@ -279,7 +356,8 @@ def is_chinese(c):
             "\u3100" <= c <= "\u9fff"  # common chinese characters
     )
 
-def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
+def convert_char_to_pinyin_sovits_f5_wrapper(text_list, dict_name=None):
+    pinyin_dict_path = resolve_pinyin_dict_path(dict_name)
     final_text_list = []
     custom_trans = str.maketrans({";": ",", "“": '', "”": '', "‘": "'", "’": "'"})
 
@@ -315,7 +393,7 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
                 if re.search(r'\s', part) or len(part) >= 2:
                     # 1. 先把缓冲槽里的正常文字送到底层模型转换
                     if buffer:
-                        char_list.extend(convert_char_to_pinyin_sovits_f5([buffer])[0])
+                        char_list.extend(convert_char_to_pinyin_sovits_f5([buffer], pinyin_dict_path=pinyin_dict_path)[0])
                         buffer = ""  # 清空缓冲槽
 
                     # 2. 将拆分出来的空格或连续标点直接打散成单字符加入
@@ -329,7 +407,7 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
 
         # 循环结束，如果缓冲槽里还有剩下的文字，最后转换一次
         if buffer:
-            char_list.extend(convert_char_to_pinyin_sovits_f5([buffer])[0])
+            char_list.extend(convert_char_to_pinyin_sovits_f5([buffer], pinyin_dict_path=pinyin_dict_path)[0])
 
         return char_list
 
@@ -361,11 +439,20 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list):
     return final_text_list
 
 
-def convert_char_to_pinyin(text_list, polyphone=True):
+def convert_char_to_pinyin(text_list, pinyin_dict_path=None, polyphone=True):
+    pinyin_config = normalize_pinyin_config(pinyin_dict_path)
+    use_g2pw = pinyin_config["use_g2pw"]
+    dict_name = pinyin_config["dict_name"]
+
     if any(is_chinese(c) for c in text_list[0]):  # gpt sovits前端
-        return convert_char_to_pinyin_sovits_f5_wrapper(text_list)
+        if use_g2pw:
+            return convert_char_to_pinyin_sovits_f5_wrapper(text_list, dict_name)
+        elif dict_name:
+            return convert_char_to_pinyin_big_dict(text_list, dict_name, polyphone)
+        else:
+            return convert_char_to_pinyin_old(text_list, polyphone)
     else:
-        return convert_char_to_pinyin_old(text_list)
+        return convert_char_to_pinyin_old(text_list, polyphone)
 
 
 def convert_char_to_pinyin_old(text_list, polyphone=True):

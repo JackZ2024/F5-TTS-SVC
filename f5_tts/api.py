@@ -17,7 +17,6 @@ from f5_tts.infer.utils_infer import (
     save_spectrogram,
     transcribe,
 )
-from f5_tts.model.utils import seed_everything
 
 
 class F5TTS:
@@ -116,8 +115,9 @@ class F5TTS:
     ):
         if seed is None:
             seed = random.randint(0, sys.maxsize)
-        seed_everything(seed)
         self.seed = seed
+        rng = torch.Generator(device=self.device)
+        rng.manual_seed(seed)
 
         ref_file, ref_text = preprocess_ref_audio_text(ref_file, ref_text)
 
@@ -138,6 +138,7 @@ class F5TTS:
             speed=speed,
             fix_duration=fix_duration,
             device=self.device,
+            rng=rng,
         )
 
         if file_wave is not None:

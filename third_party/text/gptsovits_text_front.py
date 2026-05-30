@@ -31,7 +31,7 @@ except ImportError as e:
     print("【严重错误】无法加载 GPT-SoVITS 模块！请确保你在 GPT-SoVITS 目录下运行，或已设置 PYTHONPATH。")
     raise e
 
-def convert_char_to_pinyin_sovits_f5(text_list, polyphone=True, f5_vocab=None):
+def convert_char_to_pinyin_sovits_f5(text_list, polyphone=True, f5_vocab=None, pinyin_dict_path=None):
     """
     [最终版] GPT-SoVITS 前端 -> F5-TTS 格式转换器
 
@@ -122,7 +122,7 @@ def convert_char_to_pinyin_sovits_f5(text_list, polyphone=True, f5_vocab=None):
                 buffer.extend(list(word))
                 continue
             # --- 核心 G2P 链路 ---
-            current_pinyins = correct_pronunciation(word, current_pinyins)
+            current_pinyins = correct_pronunciation(word, current_pinyins, pinyin_dict_path)
             sub_initials = [to_initials(p) if p and p[0].isalpha() else p for p in current_pinyins]
             sub_finals = [to_finals_tone3(p, neutral_tone_with_five=True) if p and p[0].isalpha() else p for p in
                           current_pinyins]
