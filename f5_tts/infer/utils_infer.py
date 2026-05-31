@@ -23,7 +23,6 @@ import torchaudio
 import tqdm
 from huggingface_hub import hf_hub_download
 from pydub import AudioSegment, silence
-from transformers import pipeline
 from vocos import Vocos
 
 from f5_tts.model import CFM
