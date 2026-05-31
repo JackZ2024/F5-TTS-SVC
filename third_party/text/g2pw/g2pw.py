@@ -174,6 +174,8 @@ def preload_pp_dicts():
 
     count = 0
     for file_name in os.listdir(dicts_dir):
+        if not file_name.startswith("g2pw"):
+            continue
         file_path = os.path.join(dicts_dir, file_name)
         if os.path.isfile(file_path):
             get_pp_dict(file_path)
@@ -192,6 +194,3 @@ def correct_pronunciation(word, word_pinyins, pinyin_dict_path=None):
         return word_pinyins
     else:
         return new_pinyins
-
-
-pp_dict = get_pp_dict()

@@ -406,6 +406,7 @@ def infer_process(
         no_ref_audio=False,
         ft_vocos=None,
         pinyin_dict_path=None,
+        seed=None,
         rng=None,
 ):
     # Split the input text into batches
@@ -440,6 +441,7 @@ def infer_process(
             no_ref_audio=no_ref_audio,
             ft_vocos=ft_vocos,
             pinyin_dict_path=pinyin_dict_path,
+            seed=seed,
             rng=rng,
         )
     )
@@ -491,6 +493,7 @@ def infer_batch_process(
         no_ref_audio=False,
         ft_vocos=None,
         pinyin_dict_path=None,
+        seed=None,
         rng=None,
 ):
     audio, sr = ref_audio
@@ -539,6 +542,7 @@ def infer_batch_process(
                 cfg_strength=cfg_strength,
                 sway_sampling_coef=sway_sampling_coef,
                 no_ref_audio=no_ref_audio,
+                seed=seed,
                 rng=rng,
             )
             del _

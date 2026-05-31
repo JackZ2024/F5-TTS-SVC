@@ -248,6 +248,8 @@ def preload_pypinyin_dicts():
 
     count = 0
     for file_name in os.listdir(dicts_dir):
+        if not file_name.startswith("pypinyin"):
+            continue
         file_path = os.path.join(dicts_dir, file_name)
         if os.path.isfile(file_path):
             get_local_pypinyin_dict(file_path)

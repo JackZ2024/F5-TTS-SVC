@@ -6,8 +6,8 @@ import csv
 import json
 import os
 import pathlib
-import re
 import shutil
+import secrets
 import string
 import sys
 import tempfile
@@ -15,11 +15,9 @@ import threading
 import time
 
 import click
-import gdown
 import gradio as gr
 import librosa
 import numpy as np
-import py7zr
 import soundfile as sf
 import torch
 import torchaudio
@@ -27,7 +25,6 @@ import torchaudio
 import asr_sherpaonnx
 from f5_tts.model.utils import convert_char_to_pinyin, preload_pypinyin_dicts
 from third_party.text.g2pw import preload_pp_dicts
-
 
 from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
@@ -37,7 +34,6 @@ from f5_tts.infer.utils_infer import (
     infer_process,
     remove_silence_for_generated_wav,
 )
-
 
 
 class _ModelCache:
@@ -51,10 +47,10 @@ class _ModelCache:
     def __init__(self, gpu_slots: int):
         self.gpu_slots = gpu_slots
         self._cond = threading.Condition()
-        self._gpu: dict = {}                        # path -> model (on GPU)
+        self._gpu: dict = {}  # path -> model (on GPU)
         self._gpu_lru = collections.OrderedDict()  # LRU 顺序
-        self._cpu: dict = {}                        # path -> model (on CPU RAM)
-        self._busy: set = set()                     # 当前正在推理中的模型路径
+        self._cpu: dict = {}  # path -> model (on CPU RAM)
+        self._busy: set = set()  # 当前正在推理中的模型路径
 
     def _log_status(self, event: str):
         """打印操作事件、GPU/CPU 模型列表及剩余显存。"""
@@ -97,10 +93,10 @@ class _ModelCache:
                     torch.cuda.empty_cache()
                     self._log_status(f"GPU → CPU RAM: {os.path.basename(evicted)}")
                     break
-                # 闂佸湱閸嬫捇鏌?GPU 濠碘檧鍋撳畷鍥ｅ亾閻戣姤鐒鹃柦妯洪煬鏌熼幁鎺戝闁癸攻缁嬪妲愬┑鍫㈤┏濠㈣泛锕︾粣锟犳煛鐏炴儳濮冮梺鍙夌矌閳ф嚀閺堝垂?
+                # 所有 GPU 模型都在推理中，等待某个完成
                 self._cond.wait()
 
-            # 婵?CPU 缂傚倸鍊归幐鎼佹偤閵娾晛绠ｉ柡宥嗗剮婵℃惈闁?
+            # 从 CPU 缓存或磁盘加载
             if ckpt_path in self._cpu:
                 mdl = self._cpu.pop(ckpt_path)
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,6 +119,7 @@ class _ModelCache:
             self._busy.discard(ckpt_path)
             self._cond.notify_all()
 
+
 # load models
 
 vocoder = load_vocoder()
@@ -135,16 +132,6 @@ def preload_shared_pinyin_dicts():
 
 
 preload_shared_pinyin_dicts()
-
-
-def get_drive_id(url):
-    """ 通过网盘文件url获取id """
-    pattern = r"(?:https?://)?(?:www\.)?drive\.google\.com/(?:file/d/|folder/d/|open\?id=|uc\?id=|drive/folders/)([a-zA-Z0-9_-]+)"
-    match = re.search(pattern, url)
-    if match:
-        return match.group(1)
-    else:
-        return url
 
 
 def get_model_dict(model_name: str, lang: str):
@@ -231,7 +218,7 @@ def get_model_pinyin_config(model_name: str, lang: str):
     return pinyin_config
 
 
-def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_info=gr.Info):
+def load_custom(model_name: str, lang: str, model_cfg=None, show_info=gr.Info):
     global F5_models_dict
     model_dict = get_model_dict(model_name, lang)
     if model_dict is None:
@@ -242,46 +229,8 @@ def load_custom(model_name: str, lang: str, password="", model_cfg=None, show_in
     ckpt_path = model_dict["model"]
     vocab_path = model_dict["vocab"]
     if not os.path.exists(vocab_path):
-        # 如果模型不存在，就根据链接下载
-        model_url = model_dict["model_url"]
-        if model_url != "":
-            show_info("下载模型中……")
-            file_id = get_drive_id(model_url)
-            download_folder = "./F5-models/" + lang
-            download_path = download_folder + "/" + model_name + ".7z"
-            os.makedirs(download_folder, exist_ok=True)
-            if not os.path.exists(download_path):
-                gdown.download(id=file_id, output=download_path, fuzzy=True)
-            # 解压
-            if password == "":
-                print("密码为空，请设置解压密码")
-                gr.Warning("密码为空，请设置解压密码")
-                return None
-            try:
-                show_info("解压模型中……")
-                with py7zr.SevenZipFile(download_path, 'r', password=password) as archive:
-                    archive.extractall(path=download_folder)
-                os.remove(download_path)
-            except Exception as e:
-                print(str(e))
-                show_info("模型解压失败")
-                return None
-
-            # 获取model路径
-            model_folder = download_folder + "/" + model_name
-            model_dict["model_folder"] = model_folder
-            model_dict.pop("pinyin_config", None)
-            for model_file in os.listdir(model_folder):
-                if model_file.lower().endswith(".safetensors") or model_file.lower().endswith(".pt"):
-                    model_dict["model"] = model_folder + "/" + model_file
-                    ckpt_path = model_dict["model"]
-                elif model_file.lower() == "vocab.txt":
-                    vocab_path = model_folder + "/" + model_file
-                    model_dict["vocab"] = vocab_path
-
-        if not os.path.exists(vocab_path):
-            print("模型不存在")
-            return None
+        print("模型不存在")
+        return None
 
     if model_cfg is None:
         if "v1" in os.path.basename(ckpt_path).lower():
@@ -383,6 +332,7 @@ def load_F5_models_list():
     print(models_dict)
     return models_dict
 
+
 def load_refs_list():
     refs_root_path = "refs"
     refs_dict = {}
@@ -461,6 +411,7 @@ F5_models_dict = load_F5_models_list()
 refs_dict, speaker_dict = load_refs_list()
 launch_in_service = True
 
+
 # 推理并发数：从命令行 --concurrency 读取，默认为 1
 # 注：必须在 UI 构建前解析，所以用 sys.argv 直接预读而不用 click
 def _pre_parse_concurrency() -> int:
@@ -472,12 +423,12 @@ def _pre_parse_concurrency() -> int:
                 pass
     return 1
 
+
 infer_concurrency_limit = _pre_parse_concurrency()
 print(f"[并发控制] 推理最大并发数: {infer_concurrency_limit}")
 
 # GPU 模型缓存：最多同时驻留 infer_concurrency_limit 个模型
 _model_cache = _ModelCache(infer_concurrency_limit)
-
 
 last_cleanup_times = {}
 cleanup_lock = threading.Lock()
@@ -505,7 +456,6 @@ def delete_old_files_and_dirs(path, days=2):
                     shutil.rmtree(full_path)
         except Exception as e:
             print(f"[{path}] 处理时出错: {full_path}, 错误: {e}")
-
 
 
 PUNCT = set(string.punctuation + '，。！？；：（）【】《》、')
@@ -543,14 +493,10 @@ def insert_punct(text):
 def infer(
         ref_audio_orig,
         ref_text,
-        num_input,
         gen_texts,
         language,
         model_name,
-        password,
         remove_silence,
-        auto_pause,
-        pause_rules,
         seed,
         cross_fade_duration=0.15,
         nfe_step=32,
@@ -558,7 +504,6 @@ def infer(
         volume=1,
         show_info=print,
         save_line_audio=False,
-        insert_punct_in_space=False,
         no_ref_audio=False,
         cfg_strength=2.0,
 ):
@@ -569,56 +514,36 @@ def infer(
     # Set inference seed
     if seed < 0 or seed > 2 ** 31 - 1:
         gr.Warning("Seed must in range 0 ~ 2147483647. Using random seed instead.")
-        seed = np.random.randint(0, 2 ** 31 - 1)
-    used_seed = seed
-    rng_device = "cuda" if torch.cuda.is_available() else "cpu"
-    rng = torch.Generator(device=rng_device)
-    rng.manual_seed(int(seed))
+        seed = secrets.randbelow(2 ** 31)
+    used_seed = int(seed)
 
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
     ref_audio_data = torchaudio.load(ref_audio)
 
-    lang_alone = language.split("-", 1)[0] if "-" in language else language
-
-    try:
-        num_input = int(num_input)
-        if num_input <= 0 or num_input > 20:
-            gr.Warning("Invalid input box count")
-            return gr.update(), [], used_seed
-    except ValueError:
-        gr.Warning("Input box count must be a number")
-        return gr.update(), [], used_seed
-
     all_gen_text_list = []
     text_box_text_list = []
-    for i in range(num_input):
-        gen_text_box = gen_texts[i]
-        if gen_text_box.strip() == "":
+
+    index = 0
+    for gen_text in gen_texts.split("\n"):
+        if gen_text.strip() == "":
             continue
-        index = 0
-        for gen_text in gen_text_box.split("\n"):
-            if gen_text.strip() == "":
-                continue
-            if (lang_alone == "??" and insert_punct_in_space) or "??-sit-?4" in model_name:
-                gen_text = insert_punct(gen_text)
 
-            all_gen_text_list.append(gen_text)
-            index += 1
+        all_gen_text_list.append(gen_text)
+        index += 1
 
-        text_box_text_list.append(index)
-
-    if len(text_box_text_list) == 0:
+    if not all_gen_text_list:
         gr.Warning("No text to generate")
         return gr.update(), [], used_seed
+    text_box_text_list.append(index)
 
     show_info("Loading model...")
-    _load_result = load_custom(model_name, language, password)
+    _load_result = load_custom(model_name, language)
     if _load_result is None or _load_result[0] is None:
         gr.Warning("Failed to load model")
         return gr.update(), [], used_seed
     ema_model, _infer_ckpt_path = _load_result
     pinyin_config = get_model_pinyin_config(model_name, language)
-
+    print("pinyin_config", pinyin_config)
     try:
         if launch_in_service:
             os.makedirs("./gen_audio", exist_ok=True)
@@ -630,7 +555,6 @@ def infer(
             delete_old_files_and_dirs("./last_audio", days=2)
 
             os.makedirs("./tmp", exist_ok=True)
-            tmp_audio_path = tempfile.mkdtemp(dir="./tmp")
             delete_old_files_and_dirs("./tmp", days=2)
         else:
             gen_audio_path = "./gen_audio"
@@ -654,6 +578,7 @@ def infer(
         segm_audio_list = []
 
         for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
+            segment_seed = (used_seed + i) % (2 ** 31)
             with torch.no_grad():
                 final_wave, final_sample_rate, _ = infer_process(
                     ref_audio_data,
@@ -668,7 +593,7 @@ def infer(
                     no_ref_audio=no_ref_audio,
                     cfg_strength=cfg_strength,
                     pinyin_dict_path=pinyin_config,
-                    rng=rng,
+                    seed=segment_seed,
                 )
 
             if isinstance(final_wave, torch.Tensor):
@@ -713,21 +638,8 @@ def infer(
         _model_cache.release(_infer_ckpt_path)
 
 
-def create_textboxes(num):
-    try:
-        num = int(num)
-        if num <= 0:
-            return [gr.update(visible=False) for _ in range(20)]
-
-        # 控制输入框的可见性，最多支持 20 个
-        updates = [gr.update(visible=True) if i < num else gr.update(visible=False) for i in range(20)]
-        return updates
-    except ValueError:
-        return [gr.update(visible=False) for _ in range(20)]
-
-
 def clear_txt_boxs():
-    return [gr.update(value="") for _ in range(20)]
+    return gr.update(value="")
 
 
 def load_ref_txt(ref_txt_path):
@@ -738,9 +650,9 @@ def load_ref_txt(ref_txt_path):
     return txt
 
 
-def get_pinyin(lang, model_name, *input_texts):
+def get_pinyin(lang, model_name, input_text):
     pinyin_config = get_model_pinyin_config(model_name, lang)
-    return convert_char_to_pinyin([input_texts[0]], pinyin_config)[0]
+    return convert_char_to_pinyin([input_text], pinyin_config)[0]
 
 
 MAX_REF_AUDIO_DURATION = 15  # 参考音频最大时长（秒）
@@ -760,6 +672,7 @@ def transcribe_with_duration_check(audio_path):
         return "读取音频时长失败"
     return asr_sherpaonnx.transcribe(audio_path)
 
+
 css = """
 .small-audio {
     min-height: 60px !important;
@@ -771,12 +684,6 @@ css = """
 """
 
 with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
-    #     gr.Markdown(
-    #         """
-    # # 自定义 F5 TTS
-    # """
-    #     )
-
     def get_default_params(lang):
         global F5_models_dict
         global refs_dict
@@ -816,19 +723,14 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         else:
             def_txt = ""
 
-        return (model_names, def_model), def_txt, (ref_audios, def_audio), ([], None), ([], None)
+        return (model_names, def_model), def_txt, (ref_audios, def_audio)
 
 
     def language_change(lang):
-        (model_names, def_model), def_txt, (ref_audios, def_audio), (svc_type_list, def_svc_type), (speaker_models,
-                                                                                                    speaker_model) = get_default_params(
-            lang)
+        (model_names, def_model), def_txt, (ref_audios, def_audio) = get_default_params(lang)
 
         return gr.update(choices=model_names, value=def_model), gr.update(value=def_txt), \
-            gr.update(choices=ref_audios, value=def_audio), \
-            gr.update(choices=svc_type_list, value=def_svc_type), \
-            gr.update(choices=speaker_models, value=speaker_model), \
-            gr.update(interactive=(def_svc_type == "Applio" or def_svc_type == "RVC"))
+            gr.update(choices=ref_audios, value=def_audio)
 
 
     def get_speed(model):
@@ -896,10 +798,6 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         return gr.update(value=def_audio), gr.update(value=def_txt)
 
 
-    def svc_type_change(lang, svc_type):
-        return gr.update(choices=[], value=None), gr.update(interactive=False)
-
-
     # model_manager = model_manager.WhisperModelManager()
     #
     # def transcribe_audio(audio):
@@ -911,22 +809,15 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
 
     if len(F5_models_dict) > 0:
         def_lang = list(F5_models_dict.keys())[0]
-        (model_names, def_model), def_txt, (ref_audios, def_audio), \
-            (svc_type_list, def_svc_type), (speaker_models, speaker_model) = get_default_params(def_lang)
+        (model_names, def_model), def_txt, (ref_audios, def_audio) = get_default_params(def_lang)
     else:
         model_names = [],
         def_model = "",
         def_txt = "'",
         ref_audios = [],
         def_audio = "",
-        svc_type_list = [],
-        def_svc_type = None,
-        speaker_models = [],
-        speaker_model = None
         def_lang = ""
 
-    # with gr.Tabs():
-    #     with gr.TabItem("TT"):
     with gr.Row():
         # 在这里添加新语言的支持，记得在languages里添加语言的英文对照
         language = gr.Dropdown(
@@ -937,74 +828,36 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             value=def_model,
             allow_custom_value=True,
             label="模型",
-            visible=True,
         )
         ref_audio = gr.Dropdown(
             choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=False
         )
 
-    with gr.Row(visible=False):
-        num_input = gr.Textbox(label="请输入需要的输入框数量(1-20)", value="1", scale=1)
-        tone_shift_slider = gr.Slider(
-            label="音调调整",
-            minimum=-12,
-            maximum=12,
-            value=0,
-            step=1,
-            info="音调偏移",
-            scale=2
-        )
-        rvc_index_rate_slider = gr.Slider(
-            label="语搜索特征比率",
-            minimum=0,
-            maximum=1,
-            value=0,
-            step=0.01,
-            info="索引文件施加的影响;值越高，影响越大。但是，选择较低的值有助于减少音频中存在的伪影。",
-            interactive=False,
-            scale=2
-        )
+    with gr.Row(equal_height=True):
+        textbox = gr.Textbox(label=f"生成文本", lines=5)
+        with gr.Column(scale=1):
+            pinyin_textbox = gr.Textbox(label="拼音", lines=3)
+            pinyin_button = gr.Button("查看拼音")
 
-    # 动态布局区域
-    rows = []
-    max_per_row = 5
-    textboxes = []
+        audio_output = gr.Audio(
+            label="合成音频",
+            interactive=True,
+            show_download_button=True,
+            autoplay=True,
+            sources=[],  # 不显示上传/录音入口，保留波形剪辑
+            waveform_options={"sample_rate": 48000},
+            min_width=200,
+            scale=2,
+        )
+        download_output = gr.File(label="下载文件", file_count="multiple")
 
-    # 创建一个动态布局，最多 20 个输入框
-    for i in range(1):  # 每行最多 5 个，4 行总共 20 个
-        with gr.Row(equal_height=True) as row:
-            for j in range(max_per_row):
-                index = i * max_per_row + j
-                if index == 0:
-                    textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=True)
-                    with gr.Column(scale=1):
-                        pinyin_textbox = gr.Textbox(label="拼音", lines=3)
-                        pinyin_button = gr.Button("查看拼音")
-                    audio_output = gr.Audio(
-                        label="合成音频",
-                        interactive=True,
-                        show_download_button=True,
-                        autoplay=True,
-                        sources=[],  # 不显示上传/录音入口，保留波形剪辑
-                        waveform_options={"sample_rate": 48000},
-                        min_width=200,
-                        scale=2,
-                    )
-                    download_output = gr.File(label="下载文件", file_count="multiple")
-                else:
-                    textbox = gr.Textbox(label=f"生成文本:{index + 1}", lines=5, visible=False)
-                textboxes.append(textbox)
-            rows.append(row)
-    pinyin_button.click(get_pinyin, inputs=[language, custom_ckpt_path, *textboxes], outputs=pinyin_textbox)
-    num_input.change(create_textboxes, inputs=[num_input], outputs=textboxes)
+    pinyin_button.click(get_pinyin, inputs=[language, custom_ckpt_path, textbox], outputs=pinyin_textbox)
 
     with gr.Row():
         clear_box_btn = gr.Button("清空文本框", variant="primary", scale=0.2, visible=False)
         generate_btn = gr.Button("合成", variant="primary")
         download_all = gr.Button("下载音频", variant="primary")
 
-    # with gr.Accordion("高级设置", open=False):
-    # gr.Markdown("✌️如果用户上传了参考音频，将会使用上传的参考，请确保参考文本和音频是一致的")
     with gr.Row(equal_height=True):
         basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
         basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
@@ -1029,34 +882,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             inputs=None,
             outputs=basic_ref_text_input
         )
-    modify_words_input = gr.Textbox(label="改词", lines=10, visible=False)
-    with gr.Row(visible=False):
-        enable_svc = gr.Checkbox(
-            label="启用音频转换",
-            info="勾选此项，启动音频转换。",
-            value=False,
-        )
 
-        svc_type = gr.Dropdown(
-            choices=svc_type_list,
-            value=def_svc_type,
-            label="音频转换类型选择",
-            visible=True,
-        )
-
-        svc_model = gr.Dropdown(
-            choices=speaker_models,
-            value=speaker_model,
-            label="音频转换音色选择",
-            visible=True,
-        )
-
-        password_input = gr.Textbox(
-            label="解压密码:",
-            type="password",
-            lines=1,
-            value="",
-        )
     with gr.Row():
         speed_slider = gr.Slider(
             label="语速设置",
@@ -1096,7 +922,6 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         value=2.0,
         step=0.1,
         info="值越大越像参考，值越小随机性越大",
-        visible=False
     )
 
     cross_fade_duration_slider = gr.Slider(
@@ -1108,8 +933,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         info="设置两个片段之前的静音时长",
         visible=False
     )
-    with gr.Row(visible=True):
-
+    with gr.Row():
         remove_silence = gr.Checkbox(
             label="删除静音",
             info="模型会自动生成静音，尤其是短音频，通过此选项可以移除静音。",
@@ -1120,36 +944,12 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             label="按行保存音频",
             info="勾选此项，中间结果会每行保存一个音频，不勾选，则每一个文本框保存一个音频。",
             value=False,
-            visible=False
         )
-        insert_punct_in_space = gr.Checkbox(
-            label="插入标点",
-            info="此功能针对泰语，在空格处插入逗号",
-            value=False,
-            visible=False
-        )
-    with gr.Row(visible=False):
-        cb_auto_pause = gr.Checkbox(
-            label="标点自动间距",
-            value=False
-        )
-        number_comma = gr.Number(label='逗号停顿（秒）', value=1.0, step=0.5)
-        number_period = gr.Number(label='句号停顿（秒）', value=2.0, step=0.5)
-        number_question = gr.Number(label='问号停顿（秒）', value=3.0, step=0.5)
-        number_exclamation = gr.Number(label='感叹号停顿（秒）', value=3.0, step=0.5)
-        number_semicolon = gr.Number(label='分号停顿（秒）', value=3.0, step=0.5)
-        cb_auto_pause.change(None, cb_auto_pause, None, js="(v)=>{ setStorage('auto_pause',v) }")
-        number_comma.change(None, number_comma, None, js="(v)=>{ setStorage('comma_pause',v) }")
-        number_period.change(None, number_period, None, js="(v)=>{ setStorage('period_pause',v) }")
-        number_question.change(None, number_question, None, js="(v)=>{ setStorage('question_pause',v) }")
-        number_exclamation.change(None, number_exclamation, None,
-                                  js="(v)=>{ setStorage('exclamation_pause',v) }")
-        number_semicolon.change(None, number_semicolon, None, js="(v)=>{ setStorage('semicolon_pause',v) }")
 
     language.change(
         language_change,
         inputs=[language],
-        outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio, svc_type, svc_model, rvc_index_rate_slider],
+        outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio],
         show_progress="hidden",
     )
 
@@ -1163,13 +963,6 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         outputs=[basic_ref_audio_preset, basic_ref_text_input],
         show_progress="hidden",
     )
-    svc_type.change(
-        svc_type_change,
-        inputs=[language, svc_type],
-        outputs=[svc_model, rvc_index_rate_slider],
-        show_progress="hidden",
-    )
-
 
     def basic_tts(
             ref_audio_preset,
@@ -1177,71 +970,41 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             ref_text_input,
             language,
             model_name,
-            password,
             remove_silence,
             randomize_seed,
             seed_input,
             save_line_audio,
-            insert_punct_in_space,
             cross_fade_duration_slider,
             nfe_slider,
             speed_slider,
             volume_slider,
-            num_input,
-            modify_words,
-            auto_pause,
-            num_comma,
-            num_period,
-            num_question,
-            num_exclamation,
-            num_semicolon,
             no_ref_audio,
             cfg_strength,
-            *gen_texts_input,
+            gen_texts_input,
     ):
         if randomize_seed:
-            seed_input = np.random.randint(0, 2 ** 31 - 1)
+            seed_input = secrets.randbelow(2 ** 31)
 
-        if modify_words and len(modify_words) > 0:
-            gen_texts_input_modify = []
-            for text in gen_texts_input:
-                for modify in modify_words.split("\n"):
-                    parts = modify.split("\t")
-                    if len(parts) != 2:
-                        continue
-                    else:
-                        text = text.replace(parts[0], parts[1])
-                        gen_texts_input_modify.append(text)
-        else:
-            gen_texts_input_modify = gen_texts_input
+        gen_texts_input_modify = gen_texts_input
+
         if ref_audio_user:
             ref_audio_input = ref_audio_user
         else:
             ref_audio_input = ref_audio_preset
+
         audio_out, gen_audio_list, used_seed = infer(
             ref_audio_input,
             ref_text_input,
-            num_input,
             gen_texts_input_modify,
             language,
             model_name,
-            password,
             remove_silence,
-            auto_pause,
-            pause_rules={
-                '，': float(num_comma),
-                '。': float(num_period),
-                '？': float(num_question),
-                '！': float(num_exclamation),
-                '；': float(num_semicolon)
-            },
             seed=seed_input,
             cross_fade_duration=cross_fade_duration_slider,
             nfe_step=nfe_slider,
             speed=speed_slider,
             volume=volume_slider,
             save_line_audio=save_line_audio,
-            insert_punct_in_space=insert_punct_in_space,
             no_ref_audio=no_ref_audio,
             cfg_strength=cfg_strength
         )
@@ -1253,27 +1016,18 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
                basic_ref_text_input,
                language,
                custom_ckpt_path,
-               password_input,
                remove_silence,
                randomize_seed,
                seed_input,
                save_line_audio,
-               insert_punct_in_space,
                cross_fade_duration_slider,
                nfe_slider,
                speed_slider,
                volume_slider,
-               num_input,
-               modify_words_input,
-               cb_auto_pause,
-               number_comma,
-               number_period,
-               number_question,
-               number_exclamation,
-               number_semicolon,
                cb_no_ref,
-               cfg_slider
-               ] + textboxes
+               cfg_slider,
+               textbox
+               ]
 
     generate_btn.click(
         basic_tts,
@@ -1285,7 +1039,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
 
     clear_box_btn.click(
         clear_txt_boxs,
-        outputs=textboxes,
+        outputs=textbox,
     )
 
     download_all.click(None, [], [], js="""
@@ -1300,36 +1054,6 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             }
         }
     """)
-
-
-    modify_words_input.change(None, modify_words_input, None, js="(v)=>{ setStorage('modifyWords', v) }")
-
-    js_get_local_storage = """
-                                        function() {
-                                          globalThis.setStorage = (key, value)=>{
-                                            localStorage.setItem(key, JSON.stringify(value))
-                                          }
-                                           globalThis.getStorage = (key, value)=>{
-                                            return JSON.parse(localStorage.getItem(key))
-                                          }
-
-                                           var modifyWords = getStorage('modifyWords')
-                                           const auto_pause = getStorage('auto_pause')
-                                           const comma_pause = getStorage('comma_pause') || '1.0'
-                                           const period_pause = getStorage('period_pause') || '2.0'
-                                           const question_pause = getStorage('question_pause') || '3.0'
-                                           const exclamation_pause = getStorage('exclamation_pause') || '3.0'
-                                           const semicolon_pause = getStorage('semicolon_pause') || '3.0'
-                                           return [modifyWords, auto_pause, comma_pause, period_pause, question_pause, exclamation_pause, semicolon_pause];
-                                          }
-                                        """
-    app.load(
-        None,
-        inputs=None,
-        outputs=[modify_words_input, cb_auto_pause, number_comma, number_period, number_question,
-                 number_exclamation, number_semicolon],
-        js=js_get_local_storage,
-    )
 
 
 @click.command()
