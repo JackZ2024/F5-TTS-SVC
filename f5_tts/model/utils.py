@@ -8,6 +8,7 @@ from importlib.resources import files
 
 import torch
 from pypinyin import lazy_pinyin, Style
+from pypinyin.contrib.tone_convert import to_tone3
 from torch.nn.utils.rnn import pad_sequence
 
 from third_party.text.gptsovits_text_front import convert_char_to_pinyin_sovits_f5
@@ -172,7 +173,7 @@ def load_pypinyin_dict_file(file_path):
 
             # 将拼音列表转换为 pypinyin 需要的嵌套列表格式
             # 例如 ['hào', 'shǐ'] -> [['hào'], ['shǐ']]
-            formatted_pinyins = [[p] for p in pinyins_list]
+            formatted_pinyins = [[to_tone3(p)] for p in pinyins_list]
 
             if word:
                 custom_phrases[word] = formatted_pinyins

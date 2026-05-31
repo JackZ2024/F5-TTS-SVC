@@ -111,6 +111,7 @@ def convert_char_to_pinyin_sovits_f5(text_list, polyphone=True, f5_vocab=None, p
 
         ptr = 0
         for word, pos in seg_cut:
+            # print("word:", word)
             word_len = len(word)
             current_pinyins = raw_pinyins[ptr: ptr + word_len]
             ptr += word_len
@@ -183,7 +184,6 @@ def convert_char_to_pinyin_sovits_f5(text_list, polyphone=True, f5_vocab=None, p
 
         # [逻辑分支 B] 常规多语种切分模式 (inference_webui.py 核心逻辑)
         segments = LangSegmenter.getTexts(raw_text)
-        print("segments:", segments)
         for seg in segments:
             lang = seg['lang']
             content = seg['text']
