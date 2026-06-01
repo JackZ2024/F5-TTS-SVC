@@ -3,7 +3,6 @@
 import os
 import string
 import sys
-from concurrent.futures import ThreadPoolExecutor
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # for MPS device compatibility
 sys.path.append(f"{os.path.dirname(os.path.abspath(__file__))}/../../third_party/BigVGAN/")
@@ -24,7 +23,6 @@ import torchaudio
 import tqdm
 from huggingface_hub import hf_hub_download
 from pydub import AudioSegment, silence
-from transformers import pipeline
 from vocos import Vocos
 
 from f5_tts.model import CFM
@@ -407,9 +405,14 @@ def infer_process(
         no_ref_audio=False,
         ft_vocos=None,
         pinyin_dict_path=None,
+        seed=None,
+        rng=None,
 ):
     # Split the input text into batches
-    audio, sr = torchaudio.load(ref_audio)
+    if isinstance(ref_audio, tuple):
+        audio, sr = ref_audio
+    else:
+        audio, sr = torchaudio.load(ref_audio)
     max_chars = int(len(ref_text.encode("utf-8")) / (audio.shape[-1] / sr) * (22 - audio.shape[-1] / sr) * speed)
     gen_text_batches = chunk_text(gen_text, max_chars=max_chars)
     for i, gen_text in enumerate(gen_text_batches):
@@ -436,7 +439,9 @@ def infer_process(
             device=device,
             no_ref_audio=no_ref_audio,
             ft_vocos=ft_vocos,
-            pinyin_dict_path=pinyin_dict_path
+            pinyin_dict_path=pinyin_dict_path,
+            seed=seed,
+            rng=rng,
         )
     )
 
@@ -486,7 +491,9 @@ def infer_batch_process(
         chunk_size=2048,
         no_ref_audio=False,
         ft_vocos=None,
-        pinyin_dict_path=None
+        pinyin_dict_path=None,
+        seed=None,
+        rng=None,
 ):
     audio, sr = ref_audio
     if audio.shape[0] > 1:
@@ -533,7 +540,9 @@ def infer_batch_process(
                 steps=nfe_step,
                 cfg_strength=cfg_strength,
                 sway_sampling_coef=sway_sampling_coef,
-                no_ref_audio=no_ref_audio
+                no_ref_audio=no_ref_audio,
+                seed=seed,
+                rng=rng,
             )
             del _
 
@@ -569,14 +578,12 @@ def infer_batch_process(
             for chunk in process_batch(gen_text):
                 yield chunk
     else:
-        with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(process_batch, gen_text) for gen_text in gen_text_batches]
-            for future in progress.tqdm(futures) if progress is not None else futures:
-                result = future.result()
-                if result:
-                    generated_wave, generated_mel_spec = next(result)
-                    generated_waves.append(generated_wave)
-                    spectrograms.append(generated_mel_spec)
+        for gen_text in progress.tqdm(gen_text_batches) if progress is not None else gen_text_batches:
+            result = process_batch(gen_text)
+            if result:
+                generated_wave, generated_mel_spec = next(result)
+                generated_waves.append(generated_wave)
+                spectrograms.append(generated_mel_spec)
 
         if generated_waves:
             if cross_fade_duration <= 0:
