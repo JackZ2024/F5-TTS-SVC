@@ -41,7 +41,7 @@ class _ModelCache:
     LRU GPU 模型缓存。最多将 gpu_slots 个模型同时保留在显存中。
     超限时将空闲（不在推理中）的最旧模型卸载到 CPU RAM，
     再次请求时优先从 CPU RAM 恢复（比磁盘加载快得多）。
-    _busy set 保证推理中的模型绝不会被驱逐。
+    _busy_counts 保证仍在推理中的模型绝不会被驱逐。
     """
 
     def __init__(self, gpu_slots: int):
@@ -50,12 +50,27 @@ class _ModelCache:
         self._gpu: dict = {}  # path -> model (on GPU)
         self._gpu_lru = collections.OrderedDict()  # LRU 顺序
         self._cpu: dict = {}  # path -> model (on CPU RAM)
-        self._busy: set = set()  # 当前正在推理中的模型路径
+        self._busy_counts = collections.Counter()  # path -> active inference count
+
+    @staticmethod
+    def _cache_key(path: str) -> str:
+        return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+    @staticmethod
+    def _display_path(path: str) -> str:
+        try:
+            rel_path = os.path.relpath(path, os.getcwd())
+        except ValueError:
+            rel_path = path
+        parts = pathlib.PurePath(rel_path).parts
+        if len(parts) >= 2:
+            return os.path.join(parts[-2], parts[-1])
+        return rel_path
 
     def _log_status(self, event: str):
         """打印操作事件、GPU/CPU 模型列表及剩余显存。"""
-        gpu_names = [os.path.basename(p) for p in self._gpu]
-        cpu_names = [os.path.basename(p) for p in self._cpu]
+        gpu_names = [self._display_path(p) for p in self._gpu]
+        cpu_names = [self._display_path(p) for p in self._cpu]
         if torch.cuda.is_available():
             free_bytes = torch.cuda.mem_get_info()[0]
             vram_info = f"{free_bytes / 1024 ** 3:.1f} GB free"
@@ -73,17 +88,18 @@ class _ModelCache:
         获取指定路径的模型（保证在 GPU 上），并标记为 busy。
         推理结束后必须调用 release(ckpt_path)。
         """
+        ckpt_path = self._cache_key(ckpt_path)
         with self._cond:
             # 已在 GPU，直接复用，更新 LRU
             if ckpt_path in self._gpu:
-                self._busy.add(ckpt_path)
+                self._busy_counts[ckpt_path] += 1
                 self._gpu_lru.move_to_end(ckpt_path)
                 return self._gpu[ckpt_path]
 
             # GPU 槽位已满，驱逐最旧的空闲模型到 CPU
             while len(self._gpu) >= self.gpu_slots:
                 evicted = next(
-                    (p for p in self._gpu_lru if p not in self._busy), None
+                    (p for p in self._gpu_lru if self._busy_counts[p] <= 0), None
                 )
                 if evicted is not None:
                     mdl = self._gpu.pop(evicted)
@@ -91,7 +107,7 @@ class _ModelCache:
                     mdl.cpu()
                     self._cpu[evicted] = mdl
                     torch.cuda.empty_cache()
-                    self._log_status(f"GPU → CPU RAM: {os.path.basename(evicted)}")
+                    self._log_status(f"GPU → CPU RAM: {self._display_path(evicted)}")
                     break
                 # 所有 GPU 模型都在推理中，等待某个完成
                 self._cond.wait()
@@ -101,22 +117,26 @@ class _ModelCache:
                 mdl = self._cpu.pop(ckpt_path)
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 mdl.to(device)
-                self._log_status(f"CPU RAM → GPU: {os.path.basename(ckpt_path)}")
+                self._log_status(f"CPU RAM → GPU: {self._display_path(ckpt_path)}")
             else:
                 mdl = load_fn()
                 if mdl is None:
                     return None
-                self._log_status(f"磁盘 → GPU: {os.path.basename(ckpt_path)}")
+                self._log_status(f"Disk → GPU: {self._display_path(ckpt_path)}")
 
             self._gpu[ckpt_path] = mdl
             self._gpu_lru[ckpt_path] = None
-            self._busy.add(ckpt_path)
+            self._busy_counts[ckpt_path] += 1
             return mdl
 
     def release(self, ckpt_path: str):
         """推理完成，从 busy 中移除，并通知等待中的驱逐请求。"""
+        ckpt_path = self._cache_key(ckpt_path)
         with self._cond:
-            self._busy.discard(ckpt_path)
+            if self._busy_counts[ckpt_path] > 1:
+                self._busy_counts[ckpt_path] -= 1
+            else:
+                self._busy_counts.pop(ckpt_path, None)
             self._cond.notify_all()
 
 
@@ -543,7 +563,8 @@ def infer(
         return gr.update(), [], used_seed
     ema_model, _infer_ckpt_path = _load_result
     pinyin_config = get_model_pinyin_config(model_name, language)
-    print("pinyin_config", pinyin_config)
+    if os.environ.get("F5_TTS_DEBUG_PINYIN_CONFIG") == "1":
+        print("pinyin_config", pinyin_config)
     try:
         if launch_in_service:
             os.makedirs("./gen_audio", exist_ok=True)
