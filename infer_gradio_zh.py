@@ -94,6 +94,7 @@ class _ModelCache:
             if ckpt_path in self._gpu:
                 self._busy_counts[ckpt_path] += 1
                 self._gpu_lru.move_to_end(ckpt_path)
+                self._log_status(f"已在GPU，直接复用: {self._display_path(ckpt_path)}")
                 return self._gpu[ckpt_path]
 
             # GPU 槽位已满，驱逐最旧的空闲模型到 CPU
