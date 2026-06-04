@@ -103,7 +103,7 @@ class G2PWOnnxConverter:
         sess_options.intra_op_num_threads = 0
 
         self.session_g2pW = onnxruntime.InferenceSession(
-            os.path.join(uncompress_path, "g2pW.onnx"),
+            os.path.join(uncompress_path, "g2pW.onnx").replace("\\", "/"),
             sess_options=sess_options,
             providers=["CPUExecutionProvider"],
         )
