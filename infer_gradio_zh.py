@@ -23,6 +23,7 @@ import torch
 import torchaudio
 
 import asr_sherpaonnx
+import model_manager
 from f5_tts.model.utils import convert_char_to_pinyin, preload_pypinyin_dicts
 from third_party.text.g2pw import preload_pp_dicts
 
@@ -692,7 +693,7 @@ def transcribe_with_duration_check(audio_path):
     except Exception as e:
         print(f"读取音频时长失败: {e}")
         return "读取音频时长失败"
-    return asr_sherpaonnx.transcribe(audio_path)
+    return transcribe_audio(audio_path)
 
 
 css = """
@@ -824,6 +825,13 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
     #
     # def transcribe_audio(audio):
     #     return asr_sherpaonnx.transcribe(audio)
+    def transcribe_audio(audio):
+        with model_manager.load_model() as model:
+            segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
+            result = ""
+            for segment in segments:
+                result += segment.text
+            return result
 
     def clear_audio():
         return def_txt
