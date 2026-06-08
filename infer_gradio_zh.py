@@ -903,8 +903,8 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             fn=transcribe_with_duration_check,
             inputs=basic_ref_audio_user,
             outputs=basic_ref_text_input,
-            concurrency_id="cpu_asr",
-            concurrency_limit=8,  # CPU 转录，可并发，与 GPU 推理队列相互独立
+            concurrency_id="asr",
+            concurrency_limit=3,
         )
 
         basic_ref_audio_user.clear(
