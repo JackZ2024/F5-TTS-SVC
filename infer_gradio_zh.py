@@ -6,8 +6,8 @@ import csv
 import json
 import os
 import pathlib
-import shutil
 import secrets
+import shutil
 import string
 import sys
 import tempfile
@@ -22,12 +22,7 @@ import soundfile as sf
 import torch
 import torchaudio
 
-import asr_sherpaonnx
 import model_manager
-from f5_tts.model.utils import convert_char_to_pinyin, preload_pypinyin_dicts
-from third_party.text.g2pw import preload_pp_dicts
-
-from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
     load_model,
@@ -35,6 +30,9 @@ from f5_tts.infer.utils_infer import (
     infer_process,
     remove_silence_for_generated_wav,
 )
+from f5_tts.model import DiT
+from f5_tts.model.utils import convert_char_to_pinyin, preload_pypinyin_dicts
+from third_party.text.g2pw import preload_pp_dicts
 
 
 class _ModelCache:
@@ -821,12 +819,10 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         return gr.update(value=def_audio), gr.update(value=def_txt)
 
 
-    # model_manager = model_manager.WhisperModelManager()
-    #
-    # def transcribe_audio(audio):
-    #     return asr_sherpaonnx.transcribe(audio)
+    mm = model_manager.WhisperModelManager()
+
     def transcribe_audio(audio):
-        with model_manager.load_model() as model:
+        with mm.load_model() as model:
             segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
             result = ""
             for segment in segments:
