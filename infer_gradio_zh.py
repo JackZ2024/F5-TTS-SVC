@@ -220,7 +220,7 @@ def _read_pinyin_config_file(model_folder):
 def get_model_pinyin_config(model_name: str, lang: str):
     model_dict = get_model_dict(model_name, lang)
     if model_dict is None:
-        return {"use_g2pw": True, "dict_name": None}
+        return {"use_g2pw": True, "dict_name": None, "is_mess": False}
 
     pinyin_config = model_dict.get("pinyin_config")
     if pinyin_config is not None:
@@ -232,6 +232,7 @@ def get_model_pinyin_config(model_name: str, lang: str):
     pinyin_config = {
         "use_g2pw": _coerce_bool(config_data.get("use_g2pw"), True),
         "dict_name": config_data.get("dict_name") or None,
+        "is_mess": _coerce_bool(config_data.get("is_mess"), False),
     }
     model_dict["pinyin_config"] = pinyin_config
 

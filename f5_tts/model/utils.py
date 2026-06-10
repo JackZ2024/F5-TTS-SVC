@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import os
 import random
 import re
@@ -213,14 +215,19 @@ def normalize_pinyin_config(pinyin_config=None):
         use_g2pw = pinyin_config.get("use_g2pw", True)
         if isinstance(use_g2pw, str):
             use_g2pw = use_g2pw.strip().lower() in {"1", "true", "yes", "on"}
+        is_mess = pinyin_config.get("is_mess", False)  # 训练的时候token搞错乱了
+        if isinstance(is_mess, str):
+            is_mess = is_mess.strip().lower() in {"1", "true", "yes", "on"}
         return {
             "use_g2pw": bool(use_g2pw),
             "dict_name": pinyin_config.get("dict_name") or None,
+            "is_mess": bool(is_mess),
         }
 
     return {
         "use_g2pw": True,
         "dict_name": pinyin_config or None,
+        "is_mess": False,
     }
 
 
@@ -446,16 +453,21 @@ def convert_char_to_pinyin(text_list, pinyin_dict_path=None, polyphone=True):
     pinyin_config = normalize_pinyin_config(pinyin_dict_path)
     use_g2pw = pinyin_config["use_g2pw"]
     dict_name = pinyin_config["dict_name"]
+    is_mess = pinyin_config["is_mess"]
 
     if any(is_chinese(c) for c in text_list[0]):  # gpt sovits前端
         if use_g2pw:
-            return convert_char_to_pinyin_sovits_f5_wrapper(text_list, dict_name)
+            converted = convert_char_to_pinyin_sovits_f5_wrapper(text_list, dict_name)
         elif dict_name:
-            return convert_char_to_pinyin_big_dict(text_list, dict_name, polyphone)
+            converted = convert_char_to_pinyin_big_dict(text_list, dict_name, polyphone)
         else:
-            return convert_char_to_pinyin_old(text_list, polyphone)
+            converted = convert_char_to_pinyin_old(text_list, polyphone)
     else:
-        return convert_char_to_pinyin_old(text_list, polyphone)
+        converted = convert_char_to_pinyin_old(text_list, polyphone)
+
+    if is_mess:
+        return [list(json.dumps(item, ensure_ascii=False)) for item in converted]
+    return converted
 
 
 def convert_char_to_pinyin_old(text_list, polyphone=True):
