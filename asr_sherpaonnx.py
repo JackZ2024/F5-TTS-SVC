@@ -1,6 +1,10 @@
 import os
 import glob
 
+import sherpa_onnx
+from huggingface_hub import snapshot_download
+from sherpa_onnx import OfflinePunctuation
+
 
 def _init_asr_recognizer():
     """模块加载时初始化 ASR recognizer，和 vocoder 一样在启动时完成，无需懒加载锁。"""
@@ -51,9 +55,29 @@ def _init_asr_recognizer():
         print(f">> ASR Initialization Error: {e}")
         return None
 
+def _get_nn_model_filename(
+        repo_id: str,
+        filename: str,
+        subfolder: str = "exp",
+) -> str:
+    return os.path.join(snapshot_download(repo_id),
+                        filename)
+
+def _get_punct_model() -> OfflinePunctuation:
+    model = _get_nn_model_filename(
+        repo_id="csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12",
+        filename="model.onnx",
+        subfolder=".",
+    )
+    config = sherpa_onnx.OfflinePunctuationConfig(
+        model=sherpa_onnx.OfflinePunctuationModelConfig(ct_transformer=model),
+    )
+
+    punct = sherpa_onnx.OfflinePunctuation(config)
+    return punct
 
 _ASR_RECOGNIZER = _init_asr_recognizer()
-
+PUNC_MODEL = _get_punct_model()
 
 def transcribe(audio_path):
     import librosa
@@ -67,6 +91,6 @@ def transcribe(audio_path):
     stream.accept_waveform(16000, audio)
     _ASR_RECOGNIZER.decode_stream(stream)
     text_result = stream.result.text
-    print(text_result)
     text_result = text_result.replace(' "<unk>" ', '，').replace(' "<unk>"', "。")
-    return text_result
+    text_result = PUNC_MODEL.add_punctuation(text_result)
+    return text_result
