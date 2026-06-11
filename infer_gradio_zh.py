@@ -22,6 +22,7 @@ import soundfile as sf
 import torch
 import torchaudio
 
+import asr_sherpaonnx
 import model_manager
 from f5_tts.infer.utils_infer import (
     load_vocoder,
@@ -692,7 +693,7 @@ def transcribe_with_duration_check(audio_path):
     except Exception as e:
         print(f"读取音频时长失败: {e}")
         return "读取音频时长失败"
-    return transcribe_audio(audio_path)
+    return asr_sherpaonnx.transcribe(audio_path)
 
 
 css = """
@@ -820,15 +821,15 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         return gr.update(value=def_audio), gr.update(value=def_txt)
 
 
-    mm = model_manager.WhisperModelManager()
-
-    def transcribe_audio(audio):
-        with mm.load_model() as model:
-            segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
-            result = ""
-            for segment in segments:
-                result += segment.text
-            return result
+    # mm = model_manager.WhisperModelManager()
+    #
+    # def transcribe_audio(audio):
+    #     with mm.load_model() as model:
+    #         segments, _ = model.transcribe(audio, language="zh", initial_prompt="这是一个中文句子，带标点。", )
+    #         result = ""
+    #         for segment in segments:
+    #             result += segment.text
+    #         return result
 
     def clear_audio():
         return def_txt
