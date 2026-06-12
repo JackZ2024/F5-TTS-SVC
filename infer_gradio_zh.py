@@ -642,7 +642,7 @@ def infer(
 
         output_audio_list = []
         ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
-        last_gen_audio_path = os.path.join(last_audio_path, f"{model_name}--{ref_basename}--spd{speed}-orgi_audio.wav")
+        last_gen_audio_path = os.path.join(last_audio_path, f"{model_name}--{ref_basename}--spd{speed}--{used_seed}-orgi_audio.wav")
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
