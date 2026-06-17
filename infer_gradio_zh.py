@@ -1123,22 +1123,14 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
     help="Automatically launch the interface in the default web browser",
 )
 @click.option(
-    "--inservice",
-    is_flag=True,
-    default=True,
-    help="Launch in service",
-)
-@click.option(
     "--concurrency",
     "-C",
     default=1,
     type=int,
     help="Max concurrent GPU inferences (default: 1). Set to VRAM_GB // 4 as a guideline, e.g. 2 for 8 GB.",
 )
-def main(port, host, share, api, root_path, inbrowser, inservice, concurrency):
+def main(port, host, share, api, root_path, inbrowser, concurrency):
     global app
-    global launch_in_service
-    launch_in_service = inservice
     print("Starting app...")
     app.queue(api_open=api).launch(
         server_name=host,
