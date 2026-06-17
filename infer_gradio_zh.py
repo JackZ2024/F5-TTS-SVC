@@ -543,20 +543,14 @@ def infer(
     ref_audio_data = torchaudio.load(ref_audio)
 
     all_gen_text_list = []
-    text_box_text_list = []
-
-    index = 0
     for gen_text in gen_texts.split("\n"):
         if gen_text.strip() == "":
             continue
-
         all_gen_text_list.append(gen_text)
-        index += 1
 
     if not all_gen_text_list:
         gr.Warning("No text to generate")
         return gr.update(), [], used_seed
-    text_box_text_list.append(index)
 
     show_info("Loading model...")
     _load_result = load_custom(model_name, language)
@@ -579,29 +573,13 @@ def infer(
 
             os.makedirs("./tmp", exist_ok=True)
             delete_old_files_and_dirs("./tmp", days=2)
-        else:
-            gen_audio_path = "./gen_audio"
-            os.makedirs(gen_audio_path, exist_ok=True)
-            last_audio_path = "./last_audio"
-            os.makedirs(last_audio_path, exist_ok=True)
-            tmp_audio_path = "./tmp"
-            os.makedirs(tmp_audio_path, exist_ok=True)
-            for file in os.listdir(tmp_audio_path):
-                try:
-                    if file.endswith(".wav"):
-                        os.remove(os.path.join(tmp_audio_path, file))
-                except OSError:
-                    pass
 
         generated_waves = []
         progress = gr.Progress()
-        start_pos = 0
-        cur_box_index = 1
-        total_box_count = text_box_text_list[0]
         segm_audio_list = []
+        ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
 
         for i, gen_text in enumerate(progress.tqdm(all_gen_text_list, desc="Processing")):
-            segment_seed = (used_seed + i) % (2 ** 31)
             with torch.no_grad():
                 final_wave, final_sample_rate, _ = infer_process(
                     ref_audio_data,
@@ -616,47 +594,39 @@ def infer(
                     no_ref_audio=no_ref_audio,
                     cfg_strength=cfg_strength,
                     pinyin_dict_path=pinyin_config,
-                    seed=segment_seed,
+                    seed=used_seed,
                 )
 
             if isinstance(final_wave, torch.Tensor):
                 final_wave = final_wave.cpu().numpy()
             final_wave = librosa.resample(final_wave, orig_sr=final_sample_rate, target_sr=48000)
             final_sample_rate = 48000
+            if volume != 1.0:
+                final_wave = final_wave * volume
             generated_waves.append(final_wave)
 
             if save_line_audio:
-                audio_filepath = os.path.join(gen_audio_path, f"{model_name}_segm_audio_{i + 1}.wav")
+                audio_filepath = os.path.join(gen_audio_path, f"{model_name}--{ref_basename}--spd{speed}--{used_seed}--seg_audio_{i + 1}.wav")
                 sf.write(audio_filepath, final_wave, final_sample_rate, "PCM_32")
                 segm_audio_list.append(audio_filepath)
-            elif i == total_box_count - 1:
-                final_waves = get_final_wave(cross_fade_duration, generated_waves[start_pos:], final_sample_rate)
-                audio_filepath = os.path.join(gen_audio_path, f"{model_name}_segm_audio_{cur_box_index}.wav")
-                sf.write(audio_filepath, final_waves, final_sample_rate, "PCM_32")
-                segm_audio_list.append(audio_filepath)
 
-                if cur_box_index < len(text_box_text_list):
-                    start_pos = total_box_count
-                    total_box_count += text_box_text_list[cur_box_index]
-                    cur_box_index += 1
-
-        output_audio_list = []
-        ref_basename = os.path.basename(ref_audio_orig).rpartition(".")[0]
-        last_gen_audio_path = os.path.join(last_audio_path, f"{model_name}--{ref_basename}--spd{speed}--{used_seed}-orgi_audio.wav")
+        last_gen_audio_path = os.path.join(last_audio_path, f"{model_name}--{ref_basename}--spd{speed}--{used_seed}--last_audio.wav")
         final_waves = None
         if len(generated_waves) > 0:
             final_waves = get_final_wave(cross_fade_duration, generated_waves, final_sample_rate)
             sf.write(last_gen_audio_path, final_waves, final_sample_rate, "PCM_32")
-            output_audio_list.append(last_gen_audio_path)
+            if not save_line_audio:  # segm_audio_list是下载文件列表，必须有值才能下载
+                segm_audio_list = [last_gen_audio_path]
 
-        if remove_silence and os.path.exists(last_gen_audio_path):
-            remove_silence_for_generated_wav(last_gen_audio_path)
-            final_waves, _ = torchaudio.load(last_gen_audio_path)
-            final_waves = final_waves.squeeze().cpu().numpy()
-        if volume != 1.0 and final_waves is not None:
-            final_waves = final_waves * volume
+        if remove_silence :
+            if os.path.exists(last_gen_audio_path):
+                remove_silence_for_generated_wav(last_gen_audio_path)
+            if save_line_audio:
+                for audio_filepath in segm_audio_list:
+                    if os.path.exists(audio_filepath):
+                        remove_silence_for_generated_wav(audio_filepath)
 
-        return (final_sample_rate, final_waves), output_audio_list, used_seed
+        return last_gen_audio_path, segm_audio_list, used_seed
     finally:
         _model_cache.release(_infer_ckpt_path)
 
@@ -869,8 +839,8 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
 
         audio_output = gr.Audio(
             label="合成音频",
+            type="filepath",
             interactive=True,
-            show_download_button=True,
             autoplay=True,
             sources=[],  # 不显示上传/录音入口，保留波形剪辑
             waveform_options={"sample_rate": 48000},
@@ -1063,6 +1033,49 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         outputs=[audio_output, download_output, seed_input],
         concurrency_id="gpu_infer",
         concurrency_limit=infer_concurrency_limit,
+    )
+
+    def handle_cropped_audio(
+        audio_path,
+        model_name,
+        ref_audio_preset,
+        ref_audio_user,
+        speed,
+        seed,
+    ):
+        if not audio_path or not os.path.exists(audio_path):
+            return gr.update()
+
+        filename = os.path.basename(audio_path)
+        # 如果是原始生成音频或者已经是裁剪过的音频，不需要再次处理
+        if "--last_audio.wav" in filename or "--cropped.wav" in filename:
+            return gr.update()
+
+        # 处理裁剪后的音频
+        ref_audio_input = ref_audio_user if ref_audio_user else ref_audio_preset
+        ref_basename = os.path.basename(ref_audio_input).rpartition(".")[0] if ref_audio_input else "ref"
+        
+        # 构造裁剪后的文件名
+        cropped_filename = f"{model_name}--{ref_basename}--spd{speed}--{int(seed)}-cropped.wav"
+        
+        os.makedirs("./last_audio", exist_ok=True)
+        target_path = os.path.join("./last_audio", cropped_filename)
+        shutil.copyfile(audio_path, target_path)
+        
+        # 返回新的下载列表，只包含这个被裁剪后的音频文件
+        return [target_path]
+
+    audio_output.change(
+        handle_cropped_audio,
+        inputs=[
+            audio_output,
+            custom_ckpt_path,
+            basic_ref_audio_preset,
+            basic_ref_audio_user,
+            speed_slider,
+            seed_input,
+        ],
+        outputs=download_output,
     )
 
     clear_box_btn.click(

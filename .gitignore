@@ -23,7 +23,8 @@ whisper_pretrain/
 temp/
 tmp/
 assets/
-
+models_asr/
+GPT_SoVITS/
 
 *.csv
 
