@@ -1116,6 +1116,12 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
     help='The root path (or "mount point") of the application, if it\'s not served from the root ("/") of the domain. Often used when the application is behind a reverse proxy that forwards requests to the application, e.g. set "/myapp" or full URL for application served at "https://example.com/myapp".',
 )
 @click.option(
+    "--inservice",
+    is_flag=True,
+    default=True,
+    help="Launch in service",
+)
+@click.option(
     "--inbrowser",
     "-i",
     is_flag=True,
