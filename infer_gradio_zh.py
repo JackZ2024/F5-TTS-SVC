@@ -1115,7 +1115,12 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
     type=str,
     help='The root path (or "mount point") of the application, if it\'s not served from the root ("/") of the domain. Often used when the application is behind a reverse proxy that forwards requests to the application, e.g. set "/myapp" or full URL for application served at "https://example.com/myapp".',
 )
-
+@click.option(
+    "--inservice",
+    is_flag=True,
+    default=True,
+    help="Launch in service",
+)
 @click.option(
     "--inbrowser",
     "-i",
@@ -1130,7 +1135,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
     type=int,
     help="Max concurrent GPU inferences (default: 1). Set to VRAM_GB // 4 as a guideline, e.g. 2 for 8 GB.",
 )
-def main(port, host, share, api, root_path, inbrowser, concurrency):
+def main(port, host, share, api, root_path, inservice, inbrowser, concurrency):
     global app
     print("Starting app...")
     app.queue(api_open=api).launch(
