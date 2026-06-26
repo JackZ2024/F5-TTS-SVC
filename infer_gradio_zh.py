@@ -13,8 +13,13 @@ import sys
 import tempfile
 import threading
 import time
-
 import click
+
+# Set Gradio temp directory to a local folder to avoid tmpfs RAM consumption on Linux
+if "GRADIO_TEMP_DIR" not in os.environ:
+    os.environ["GRADIO_TEMP_DIR"] = os.path.abspath("gradio_tmp")
+os.makedirs(os.environ["GRADIO_TEMP_DIR"], exist_ok=True)
+
 import gradio as gr
 import librosa
 import numpy as np
@@ -23,7 +28,7 @@ import torch
 import torchaudio
 
 import asr_sherpaonnx
-import model_manager
+
 from f5_tts.infer.utils_infer import (
     load_vocoder,
     load_model,
@@ -34,6 +39,7 @@ from f5_tts.infer.utils_infer import (
 from f5_tts.model import DiT
 from f5_tts.model.utils import convert_char_to_pinyin, preload_pypinyin_dicts
 from third_party.text.g2pw import preload_pp_dicts
+
 
 
 class _ModelCache:
@@ -1138,6 +1144,12 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
 def main(port, host, share, api, root_path, inservice, inbrowser, concurrency):
     global app
     print("Starting app...")
+    import tempfile
+    allowed_paths = [os.path.abspath("gradio_tmp")]
+    try:
+        allowed_paths.append(tempfile.gettempdir())
+    except Exception:
+        pass
     app.queue(api_open=api).launch(
         server_name=host,
         server_port=port,
@@ -1145,6 +1157,7 @@ def main(port, host, share, api, root_path, inservice, inbrowser, concurrency):
         show_api=api,
         root_path=root_path,
         inbrowser=inbrowser,
+        allowed_paths=allowed_paths
     )
 
 
