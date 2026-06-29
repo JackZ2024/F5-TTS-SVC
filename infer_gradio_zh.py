@@ -580,6 +580,8 @@ def infer(
             os.makedirs("./tmp", exist_ok=True)
             delete_old_files_and_dirs("./tmp", days=2)
 
+            delete_old_files_and_dirs("./gradio_tmp",days=2)
+
         generated_waves = []
         progress = gr.Progress()
         segm_audio_list = []
