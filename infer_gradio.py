@@ -991,7 +991,7 @@ def infer(
         elif "泰语-sit-男-5" in model_name:
             gen_text = process_thai_repeat(replace_numbers_with_thai(gen_text))
 
-        if "塞尔" in lang or "塞语" in lang:
+        if "塞尔" in lang or "塞语" in lang or "sr" in lang:
             gen_text = cyrtranslit.to_cyrillic(gen_text, 'sr')
             print("转换西里文")
         all_gen_text_list.append(gen_text)
