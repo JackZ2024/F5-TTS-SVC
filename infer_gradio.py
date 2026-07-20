@@ -1575,7 +1575,7 @@ with gr.Blocks(title="TTS-SVC_v5") as app:
                     info="设置两个片段之前的静音时长",
                 )
 
-            audio_output = gr.Audio(label="合成音频", interactive=True)
+            audio_output = gr.Audio(label="合成音频", interactive=True, show_download_button=True)
             download_output = gr.File(label="下载文件", file_count="multiple")
             with gr.Row():
                 num_list = gr.Textbox(label="", value="1")
