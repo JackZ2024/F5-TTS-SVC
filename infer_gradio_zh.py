@@ -367,7 +367,7 @@ def load_refs_list():
     speaker_dict = {}
     if not os.path.exists(refs_root_path):
         # 如果refs文件夹不存在，那就到网盘下载一份，这里需要实现网盘下载refs文件夹的功能。TODO
-        return refs_dict
+        return refs_dict, speaker_dict
 
     for folder in os.listdir(refs_root_path):
         folder_path = os.path.join(refs_root_path, folder)
