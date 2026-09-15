@@ -545,6 +545,8 @@ def infer(
         seed = secrets.randbelow(2 ** 31)
     used_seed = int(seed)
 
+    if not ref_text or not ref_text.strip():
+        raise gr.Error("参考文本为空，请等待上传转录完成或手动填写参考音频对应文本。")
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
     ref_audio_data = torchaudio.load(ref_audio)
 
@@ -674,6 +676,72 @@ def transcribe_with_duration_check(audio_path):
     return asr_sherpaonnx.transcribe(audio_path)
 
 
+def transcribe_batch_references(audio_files):
+    """仅供上传事件调用，转录结果按文件顺序逐行回填。"""
+    paths = [audio_files] if isinstance(audio_files, str) else list(audio_files or [])
+    lines = []
+    for i, path in enumerate(paths):
+        try:
+            text = transcribe_with_duration_check(path)
+            lines.append(" ".join((text or "").split()))
+        except Exception as exc:
+            gr.Warning(f"第 {i + 1} 个参考音频转录失败：{exc}")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def batch_tts(audio_files, ref_text_block, text, language, model_name,
+              remove_silence, seed, **infer_kwargs):
+    """按上传顺序逐条推理，保留参考文本空行的位置以及已成功的结果。"""
+    paths = [audio_files] if isinstance(audio_files, str) else list(audio_files or [])
+    paths = [p.get("path") or p.get("name") if isinstance(p, dict) else p for p in paths]
+    if not paths or any(not p or not os.path.isfile(p) for p in paths):
+        raise gr.Error("请上传有效的批量参考音频。")
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if len(lines) != len(paths):
+        raise gr.Error(f"数量不一致：生成文本有 {len(lines)} 行，参考音频有 {len(paths)} 个。")
+    ref_lines = (ref_text_block or "").splitlines()
+    if len(ref_lines) > len(paths):
+        raise gr.Error("参考文本行数超过音频数量，请每行对应一个音频。")
+    ref_lines += [""] * (len(paths) - len(ref_lines))
+    for i, ref_line in enumerate(ref_lines):
+        if not ref_line.strip():
+            raise gr.Error(f"第 {i + 1} 条参考文本为空，请等待上传转录完成或手动填写。")
+    if seed < 0 or seed > 2 ** 31 - 1:
+        seed = secrets.randbelow(2 ** 31)
+    seed = int(seed)
+    # 在开始推理前检查所有音频，避免批次执行一半才发现无效输入。
+    for i, path in enumerate(paths):
+        try:
+            duration = sf.info(path).duration
+        except Exception as exc:
+            raise gr.Error(f"第 {i + 1} 个参考音频读取失败：{exc}") from exc
+        if duration > MAX_REF_AUDIO_DURATION:
+            raise gr.Error(f"第 {i + 1} 个参考音频过长（{duration:.1f}s），请使用 {MAX_REF_AUDIO_DURATION}s 以内的音频。")
+    outputs = []
+    errors = []
+    preview = None
+    progress = gr.Progress()
+    for i in progress.tqdm(range(len(paths)), desc="批量合成"):
+        try:
+            audio, files, _ = infer(
+                paths[i], ref_lines[i], lines[i], language, model_name,
+                remove_silence, seed=seed, save_line_audio=False, **infer_kwargs,
+            )
+            if not files:
+                raise ValueError("未生成音频，请检查模型和输入")
+            # infer 为每次调用创建独立目录，重复文件名也不会覆盖。
+            outputs.extend(files)
+            if preview is None:
+                preview = audio
+        except Exception as exc:
+            errors.append(f"第 {i + 1} 条（{os.path.basename(paths[i])}）：{exc}")
+    if errors:
+        gr.Warning("部分或全部生成失败：\n" + "\n".join(errors))
+    gr.Info(f"批量合成完成：{len(outputs)}/{len(paths)} 条成功，试听第一条成功结果。")
+    return preview, outputs, seed
+
+
 css = """
 .small-audio {
     min-height: 60px !important;
@@ -719,18 +787,18 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         else:
             def_audio = None
 
-        if len(ref_txts) > 0:
-            def_txt = load_ref_txt(ref_txts[0]).strip()
-        else:
-            def_txt = ""
+        # if len(ref_txts) > 0:
+        #     def_txt = load_ref_txt(ref_txts[0]).strip()
+        # else:
+        def_txt = ""
 
         return (model_names, def_model), def_txt, (ref_audios, def_audio)
 
 
-    def language_change(lang):
+    def language_change(lang, reference_mode="single"):
         (model_names, def_model), def_txt, (ref_audios, def_audio) = get_default_params(lang)
 
-        return gr.update(choices=model_names, value=def_model), gr.update(value=def_txt), \
+        return gr.update(choices=model_names, value=def_model), (gr.update() if reference_mode == "batch" else gr.update(value=def_txt)), \
             gr.update(choices=ref_audios, value=def_audio)
 
 
@@ -743,7 +811,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         return speed
 
 
-    def model_change(lang, model_name, ref_audio_user, orig_ref_text):
+    def model_change(lang, model_name, ref_audio_user, orig_ref_text, reference_mode="single"):
         ref_audios = []
         ref_txts = []
         lang_alone = lang
@@ -765,19 +833,19 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         else:
             def_audio = None
 
-        if ref_audio_user:
+        if ref_audio_user or reference_mode == "batch":
             def_txt = orig_ref_text
         else:
-            if len(ref_txts) > 0:
-                def_txt = load_ref_txt(ref_txts[0]).strip()
-            else:
-                def_txt = ""
+            # if len(ref_txts) > 0:
+            #     def_txt = load_ref_txt(ref_txts[0]).strip()
+            # else:
+            def_txt = ""
 
         return gr.update(value=def_txt), \
             gr.update(choices=ref_audios, value=def_audio), get_speed(model_name)
 
 
-    def ref_audio_change(lang, audio_path, ref_audio_user, orig_ref_text):
+    def ref_audio_change(lang, audio_path, ref_audio_user, orig_ref_text, reference_mode="single"):
         global refs_dict
         global def_txt
         lang_alone = lang
@@ -793,7 +861,7 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
                 def_audio = key
                 def_txt = load_ref_txt(value).strip()
                 break
-        if ref_audio_user:
+        if ref_audio_user or reference_mode == "batch":
             def_txt = orig_ref_text
 
         return gr.update(value=def_audio), gr.update(value=def_txt)
@@ -836,11 +904,12 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             label="模型",
         )
         ref_audio = gr.Dropdown(
-            choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=False
+            choices=ref_audios, value=def_audio, label="参考音频", allow_custom_value=False, visible=False
         )
 
     with gr.Row(equal_height=True):
-        textbox = gr.Textbox(label=f"生成文本", lines=5)
+        textbox = gr.Textbox(label="生成文本", lines=5,
+                             placeholder="批量模式：每行一条，按上传顺序对应参考音频。")
         with gr.Column(scale=1):
             pinyin_textbox = gr.Textbox(label="拼音", lines=3)
             pinyin_button = gr.Button("查看拼音")
@@ -865,15 +934,40 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
         download_all = gr.Button("下载音频", variant="primary")
 
     with gr.Row(equal_height=True):
-        basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio)
-        basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
+        basic_ref_audio_preset = gr.Audio(label="预设参考音频", type="filepath", value=def_audio, visible=False)
+        reference_mode = gr.State("single")
+        with gr.Column():
+            with gr.Tabs():
+                with gr.Tab("单参考音频") as single_ref_tab:
+                    basic_ref_audio_user = gr.Audio(label="用户上传参考音频", sources=["upload"], type="filepath")
+                with gr.Tab("多参考批量") as batch_ref_tab:
+                    batch_ref_audio = gr.File(
+                        label="参考音频（按上传列表顺序对应生成文本）",
+                        file_count="multiple", type="filepath",
+                        file_types=[".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"],
+                    )
         with gr.Column():
             basic_ref_text_input = gr.Textbox(
                 label="参考音频对应文本",
                 lines=2,
                 value=def_txt,
+                placeholder="上传音频后自动转录，可手动修改。批量模式每行对应一个参考音频，合成前请确认文本完整。",
             )
             cb_no_ref = gr.Checkbox(label="禁用音频参考（使用时速率建议为1.0）", value=False)
+
+        single_ref_tab.select(lambda: ("single", ""),
+                              outputs=[reference_mode, basic_ref_text_input], queue=False)
+        batch_ref_tab.select(lambda: ("batch", ""),
+                             outputs=[reference_mode, basic_ref_text_input], queue=False)
+        batch_ref_audio.upload(
+            fn=transcribe_batch_references,
+            inputs=batch_ref_audio,
+            outputs=basic_ref_text_input,
+            concurrency_id="asr",
+            concurrency_limit=3,
+        )
+        batch_ref_audio.clear(lambda: "", outputs=basic_ref_text_input, queue=False)
+        batch_ref_audio.delete(lambda: "", outputs=basic_ref_text_input, queue=False)
 
         basic_ref_audio_user.upload(
             fn=transcribe_with_duration_check,
@@ -954,21 +1048,21 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
 
     language.change(
         language_change,
-        inputs=[language],
+        inputs=[language, reference_mode],
         outputs=[custom_ckpt_path, basic_ref_text_input, ref_audio],
         show_progress="hidden",
     )
 
     custom_ckpt_path.change(model_change,
-                            inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input],
+                            inputs=[language, custom_ckpt_path, basic_ref_audio_user, basic_ref_text_input, reference_mode],
                             outputs=[basic_ref_text_input, ref_audio, speed_slider])
 
-    ref_audio.change(
-        ref_audio_change,
-        inputs=[language, ref_audio, basic_ref_audio_user, basic_ref_text_input],
-        outputs=[basic_ref_audio_preset, basic_ref_text_input],
-        show_progress="hidden",
-    )
+    # ref_audio.change(
+    #     ref_audio_change,
+    #     inputs=[language, ref_audio, basic_ref_audio_user, basic_ref_text_input, reference_mode],
+    #     outputs=[basic_ref_audio_preset, basic_ref_text_input],
+    #     show_progress="hidden",
+    # )
 
     def basic_tts(
             ref_audio_preset,
@@ -987,9 +1081,20 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
             no_ref_audio,
             cfg_strength,
             gen_texts_input,
+            reference_mode="single",
+            batch_ref_audio=None,
     ):
         if randomize_seed:
             seed_input = secrets.randbelow(2 ** 31)
+
+        if reference_mode == "batch":
+            return batch_tts(
+                batch_ref_audio, ref_text_input, gen_texts_input,
+                language, model_name, remove_silence, seed_input,
+                cross_fade_duration=cross_fade_duration_slider,
+                nfe_step=nfe_slider, speed=speed_slider, volume=volume_slider,
+                no_ref_audio=no_ref_audio, cfg_strength=cfg_strength,
+            )
 
         gen_texts_input_modify = gen_texts_input
 
@@ -1032,7 +1137,9 @@ with gr.Blocks(title="TT-SVC_v3", css=css, analytics_enabled=False) as app:
                volume_slider,
                cb_no_ref,
                cfg_slider,
-               textbox
+               textbox,
+               reference_mode,
+               batch_ref_audio,
                ]
 
     generate_btn.click(
