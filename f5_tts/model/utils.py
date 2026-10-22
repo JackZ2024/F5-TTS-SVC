@@ -13,7 +13,6 @@ from pypinyin import lazy_pinyin, Style
 from pypinyin.contrib.tone_convert import to_tone3
 from torch.nn.utils.rnn import pad_sequence
 
-from third_party.text.gptsovits_text_front import convert_char_to_pinyin_sovits_f5
 
 try:
     import jieba_fast as jieba
@@ -380,6 +379,8 @@ def convert_char_to_pinyin_sovits_f5_wrapper(text_list, dict_name=None):
         return [s for s in result if s]
 
     def safe_convert_char_to_pinyin(text):
+        from third_party.text.gptsovits_text_front import convert_char_to_pinyin_sovits_f5
+
         """
         带缓冲区的安全转换：
         1. 遇到 [单个空格] 拆分
